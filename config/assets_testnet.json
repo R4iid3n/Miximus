@@ -1,0 +1,111 @@
+{
+  "version": "2.0.0",
+  "description": "Miximus testnet asset registry — BTC, ETH, USDT, USDC on Sepolia, Tron Nile, Bitcoin Testnet",
+
+  "chains": {
+    "ethereum": {
+      "chain_id": 11155111,
+      "name": "Sepolia",
+      "type": "evm",
+      "native_currency": "ETH",
+      "native_decimals": 18,
+      "rpc_url": "https://ethereum-sepolia-rpc.publicnode.com",
+      "explorer": "https://sepolia.etherscan.io",
+      "supports_eip1559": true,
+      "snark_precompile": true
+    },
+    "tron": {
+      "chain_id": null,
+      "name": "Tron Nile",
+      "type": "tvm",
+      "native_currency": "TRX",
+      "native_decimals": 6,
+      "rpc_url": "https://nile.trongrid.io",
+      "explorer": "https://nile.tronscan.org",
+      "supports_eip1559": false,
+      "snark_precompile": false
+    },
+    "bitcoin": {
+      "chain_id": null,
+      "name": "Bitcoin Testnet",
+      "type": "utxo",
+      "native_currency": "BTC",
+      "native_decimals": 8,
+      "rpc_url": "https://blockstream.info/testnet/api",
+      "explorer": "https://blockstream.info/testnet",
+      "supports_eip1559": false,
+      "snark_precompile": false
+    }
+  },
+
+  "assets": {
+    "native_coins": [
+      {
+        "symbol": "ETH",
+        "name": "Ethereum (Sepolia)",
+        "chain": "ethereum",
+        "type": "native",
+        "decimals": 18,
+        "denomination": "60000000000000000",
+        "mixer_contract": "0x85A4ecCe24580f6d90adFFD74d9B061BD3A4f3c4",
+        "_note": "0.06 ETH — deployed on Sepolia"
+      },
+      {
+        "symbol": "BTC",
+        "name": "Bitcoin (Testnet)",
+        "chain": "bitcoin",
+        "type": "native",
+        "decimals": 8,
+        "denomination": "200000",
+        "_note": "0.002 BTC — custodial (no smart contract)"
+      }
+    ],
+
+    "stablecoins": [
+      {
+        "symbol": "USDT",
+        "name": "Tether (Sepolia)",
+        "chain": "ethereum",
+        "type": "erc20",
+        "decimals": 6,
+        "contract": "0x82cd1ECEebA7FcFB60191bCB18AA9F259AB52495",
+        "denomination": "1000000",
+        "mixer_contract": "0x7a958DBd4C3BDd7ff82ed3ffab5e895a8b49C4EA",
+        "_note": "Test USDT on Sepolia — deployed"
+      },
+      {
+        "symbol": "USDT",
+        "name": "Tether (Nile)",
+        "chain": "tron",
+        "type": "trc20",
+        "decimals": 6,
+        "contract": "TXLAQ63Xg1NAzckPwKHvzw7CSEmLMEqcdj",
+        "denomination": "1000000",
+        "mixer_contract": "TSCu8XbzpxAmdBvQjLRzzdzfckZVTRLAyr",
+        "_note": "Tron Nile USDT — deployed"
+      },
+      {
+        "symbol": "USDC",
+        "name": "USD Coin (Sepolia)",
+        "chain": "ethereum",
+        "type": "erc20",
+        "decimals": 6,
+        "contract": "0xaDa8A85c68E49153FB114C0eE1b165B3B46a9611",
+        "denomination": "1000000",
+        "mixer_contract": "0xBeB1B7eA73e18fA7E588f09C9154F2781E48578b",
+        "_note": "Test USDC on Sepolia — deployed"
+      },
+      {
+        "symbol": "USDC",
+        "name": "USD Coin (Nile)",
+        "chain": "tron",
+        "type": "trc20",
+        "decimals": 6,
+        "contract": "TTh2LQ1m6o1cToLR3jmfBqYzp8MYMtMXXH",
+        "denomination": "1000000",
+        "mixer_contract": "TQwSctaE4f1WdpTc37c9ckyy322ab1AauU",
+        "_note": "Test USDC on Nile — deployed"
+      }
+    ]
+  }
+}

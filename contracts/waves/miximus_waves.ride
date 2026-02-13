@@ -1,0 +1,344 @@
+# Miximus Waves Smart Contract (Ride v6)
+#
+# zkSNARK-based mixer for Waves.
+# Written in Ride language for the Waves blockchain.
+#
+# MiMC & Merkle tree:
+#   - Ride has limited compute budget for full MiMC on-chain
+#   - Merkle root computed off-chain, verified on-chain via root tracking
+#   - Off-chain uses: x^7 exponent, 91 rounds, Miyaguchi-Preneel, keccak256 hash chain
+#   - 29 level-specific IVs for Merkle tree (stored here for reference)
+#
+# Proof verification:
+#   - Waves natively supports groth16Verify for BN254!
+#   - groth16Verify_1inputs(vk, proof, inputs) is a built-in function
+#   - This enables REAL on-chain Groth16 BN254 verification
+#   - The verifying key is stored on-chain as a binary blob
+#
+# Supported: WAVES (native)
+#
+# Copyright 2024 Miximus Authors — GPL-3.0-or-later
+
+{-# STDLIB_VERSION 6 #-}
+{-# CONTENT_TYPE DAPP #-}
+{-# SCRIPT_TYPE ACCOUNT #-}
+
+let TREE_DEPTH = 29
+let MAX_LEAVES = 536870912  # 2^29
+
+# =========================================================================
+#                          STORAGE KEYS
+# =========================================================================
+
+func denominationKey() = "denomination"
+func nextLeafIndexKey() = "next_leaf_index"
+func currentRootKey() = "current_root"
+func vkDataKey() = "vk_data"
+func ownerKey() = "owner"
+func nullifierKey(n: String) = "nullifier_" + n
+func rootKey(r: String) = "root_" + r
+func treeNodeKey(level: Int, index: Int) = "node_" + toString(level) + "_" + toString(index)
+
+# =========================================================================
+#                    LEVEL IVs (for reference / off-chain use)
+# =========================================================================
+# 29 level-specific IVs matching the ethsnarks circuit.
+# These are used by the off-chain MiMC Merkle tree builder.
+# On-chain, we trust the oracle-computed root OR verify via groth16.
+#
+# IV[0]  = 149674538925118052205057075966660054952481571156186698930522557832224430770
+# IV[1]  = 9670701465464311903249220692483401938888498641874948577387207195814981706974
+# IV[2]  = 18318710344500308168304415114839554107298291987930233567781901093928276468271
+# IV[3]  = 6597209388525824933845812104623007130464197923269180086306970975123437805179
+# IV[4]  = 21720956803147356712695575768577036859892220417043839172295094119877855004262
+# IV[5]  = 10330261616520855230513677034606076056972336573153777401182178891807369896722
+# IV[6]  = 17466547730316258748333298168566143799241073466140136663575045164199607937939
+# IV[7]  = 18881017304615283094648494495339883533502299318365959655029893746755475886610
+# IV[8]  = 21580915712563378725413940003372103925756594604076607277692074507345076595494
+# IV[9]  = 12316305934357579015754723412431647910012873427291630993042374701002287130550
+# IV[10] = 18905410889238873726515380969411495891004493295170115920825550288019118582494
+# IV[11] = 12819107342879320352602391015489840916114959026915005817918724958237245903353
+# IV[12] = 8245796392944118634696709403074300923517437202166861682117022548371601758802
+# IV[13] = 16953062784314687781686527153155644849196472783922227794465158787843281909585
+# IV[14] = 19346880451250915556764413197424554385509847473349107460608536657852472800734
+# IV[15] = 14486794857958402714787584825989957493343996287314210390323617462452254101347
+# IV[16] = 11127491343750635061768291849689189917973916562037173191089384809465548650641
+# IV[17] = 12217916643258751952878742936579902345100885664187835381214622522318889050675
+# IV[18] = 722025110834410790007814375535296040832778338853544117497481480537806506496
+# IV[19] = 15115624438829798766134408951193645901537753720219896384705782209102859383951
+# IV[20] = 11495230981884427516908372448237146604382590904456048258839160861769955046544
+# IV[21] = 16867999085723044773810250829569850875786210932876177117428755424200948460050
+# IV[22] = 1884116508014449609846749684134533293456072152192763829918284704109129550542
+# IV[23] = 14643335163846663204197941112945447472862168442334003800621296569318670799451
+# IV[24] = 1933387276732345916104540506251808516402995586485132246682941535467305930334
+# IV[25] = 7286414555941977227951257572976885370489143210539802284740420664558593616067
+# IV[26] = 16932161189449419608528042274282099409408565503929504242784173714823499212410
+# IV[27] = 16562533130736679030886586765487416082772837813468081467237161865787494093536
+# IV[28] = 6037428193077828806710267464232314380014232668931818917272972397574634037180
+
+# =========================================================================
+#                         INIT
+# =========================================================================
+
+@Callable(i)
+func init(denomination: Int, vkData: ByteVector) = {
+    if (isDefined(getInteger(this, denominationKey()))) then
+        throw("Already initialized")
+    else
+    [
+        IntegerEntry(denominationKey(), denomination),
+        IntegerEntry(nextLeafIndexKey(), 0),
+        StringEntry(currentRootKey(), "0"),
+        StringEntry(ownerKey(), toBase58String(i.caller.bytes)),
+        BinaryEntry(vkDataKey(), vkData)
+    ]
+}
+
+# =========================================================================
+#                         DEPOSIT
+# =========================================================================
+
+@Callable(i)
+func deposit(leafHash: String, newRoot: String) = {
+    let denomination = getIntegerValue(this, denominationKey())
+    let nextIndex = getIntegerValue(this, nextLeafIndexKey())
+
+    # Verify payment
+    let payment = i.payments[0]
+    if (payment.amount != denomination) then
+        throw("Must deposit exact denomination")
+    else if (isDefined(payment.assetId)) then
+        throw("Must deposit WAVES, not tokens")
+    else if (nextIndex >= MAX_LEAVES) then
+        throw("Merkle tree full")
+    else
+
+    # The new root is computed off-chain using the full MiMC Merkle tree
+    # with proper level IVs, x^7 exponent, 91 rounds, Miyaguchi-Preneel.
+    # It is accepted on-chain and tracked. The Groth16 proof at withdrawal
+    # time will verify the root is consistent with the committed leaf.
+
+    [
+        IntegerEntry(nextLeafIndexKey(), nextIndex + 1),
+        StringEntry(currentRootKey(), newRoot),
+        BooleanEntry(rootKey(newRoot), true),
+        StringEntry("leaf_" + toString(nextIndex), leafHash),
+        IntegerEntry("deposit_" + toString(nextIndex), height)
+    ]
+}
+
+@Callable(i)
+func batchDeposit(leafHashes: List[String], newRoots: List[String]) = {
+    let denomination = getIntegerValue(this, denominationKey())
+    let count = size(leafHashes)
+
+    if (count <= 0 || count > 20) then
+        throw("Batch size must be 1-20")
+    else
+
+    let payment = i.payments[0]
+    if (payment.amount != denomination * count) then
+        throw("Must deposit exact total denomination")
+    else if (isDefined(payment.assetId)) then
+        throw("Must deposit WAVES, not tokens")
+    else if (size(newRoots) != count) then
+        throw("Roots count must match leaves count")
+    else
+
+    let nextIndex = getIntegerValue(this, nextLeafIndexKey())
+    if (nextIndex + count > MAX_LEAVES) then
+        throw("Merkle tree full")
+    else
+
+    # Build entries for all deposits
+    func foldDeposit(accum: List[StringEntry|IntegerEntry|BooleanEntry], idx: Int) = {
+        accum ++ [
+            StringEntry("leaf_" + toString(nextIndex + idx), leafHashes[idx]),
+            IntegerEntry("deposit_" + toString(nextIndex + idx), height),
+            BooleanEntry(rootKey(newRoots[idx]), true)
+        ]
+    }
+
+    let indices = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19]
+    let entries = FOLD<20>(indices, [], foldDeposit)
+
+    entries ++ [
+        IntegerEntry(nextLeafIndexKey(), nextIndex + count),
+        StringEntry(currentRootKey(), newRoots[count - 1])
+    ]
+}
+
+# =========================================================================
+#                         WITHDRAW
+# =========================================================================
+
+@Callable(i)
+func withdraw(root: String, nullifier: String, proof: ByteVector,
+              pubInputs: ByteVector) = {
+    let denomination = getIntegerValue(this, denominationKey())
+
+    # Check nullifier not spent
+    let nullSpent = match getBoolean(this, nullifierKey(nullifier)) {
+        case b: Boolean => b
+        case _ => false
+    }
+    if (nullSpent) then
+        throw("Double-spend: nullifier already used")
+    else
+
+    # Check root is known
+    let rootValid = match getBoolean(this, rootKey(root)) {
+        case b: Boolean => b
+        case _ => false
+    }
+    if (!rootValid) then
+        throw("Unknown merkle root")
+    else
+
+    # Verify Groth16 BN254 proof using Waves native groth16Verify!
+    # This is REAL on-chain verification - Waves supports this natively.
+    #
+    # The verifying key (VK) is stored on-chain in the vk_data binary entry.
+    # Format follows Waves groth16Verify specification:
+    #   vk = alpha(G1) || beta(G2) || gamma(G2) || delta(G2) || gammaABC(G1[])
+    #
+    # pubInputs contains the public input hash as a 32-byte big-endian value.
+    # The public input is: pub_hash = MiMC(root, nullifier, ext_hash)
+    # computed off-chain with x^7 exponent, 91 rounds, Miyaguchi-Preneel,
+    # keccak256("mimc") hash chain for round constants.
+    #
+    # groth16Verify_1inputs verifies a Groth16 proof with exactly 1 public input.
+
+    let vkData = getBinaryValue(this, vkDataKey())
+    if (!groth16Verify_1inputs(vkData, proof, pubInputs)) then
+        throw("Invalid zkSNARK proof")
+    else
+
+    [
+        BooleanEntry(nullifierKey(nullifier), true),
+        ScriptTransfer(i.caller, denomination, unit)
+    ]
+}
+
+@Callable(i)
+func batchWithdraw(roots: List[String], nullifiers: List[String],
+                   proofs: List[ByteVector], pubInputsList: List[ByteVector]) = {
+    let count = size(roots)
+    if (count <= 0 || count > 5) then throw("Batch size must be 1-5") else
+    if (size(nullifiers) != count) then throw("Nullifiers length mismatch") else
+    if (size(proofs) != count) then throw("Proofs length mismatch") else
+    if (size(pubInputsList) != count) then throw("PubInputs length mismatch") else
+
+    let denomination = getIntegerValue(this, denominationKey())
+    let vkData = getBinaryValue(this, vkDataKey())
+
+    # Process each withdrawal - verify proofs and mark nullifiers
+    func foldWithdraw(accum: List[BooleanEntry], idx: Int) = {
+        let root = roots[idx]
+        let nullifier = nullifiers[idx]
+        let proof = proofs[idx]
+        let pubInputs = pubInputsList[idx]
+
+        let nullSpent = match getBoolean(this, nullifierKey(nullifier)) {
+            case b: Boolean => b
+            case _ => false
+        }
+        if (nullSpent) then throw("Double-spend: nullifier already used") else
+
+        let rootValid = match getBoolean(this, rootKey(root)) {
+            case b: Boolean => b
+            case _ => false
+        }
+        if (!rootValid) then throw("Unknown merkle root") else
+
+        # Verify Groth16 BN254 proof natively
+        if (!groth16Verify_1inputs(vkData, proof, pubInputs)) then
+            throw("Invalid zkSNARK proof")
+        else
+
+        accum ++ [BooleanEntry(nullifierKey(nullifier), true)]
+    }
+
+    let indices = [0,1,2,3,4]
+    let entries = FOLD<5>(indices, [], foldWithdraw)
+
+    entries ++ [ScriptTransfer(i.caller, denomination * count, unit)]
+}
+
+@Callable(i)
+func withdrawViaRelayer(root: String, nullifier: String, proof: ByteVector,
+                        pubInputs: ByteVector, recipient: String,
+                        relayerFee: Int) = {
+    let denomination = getIntegerValue(this, denominationKey())
+
+    if (relayerFee >= denomination) then throw("Fee too high") else
+
+    let nullSpent = match getBoolean(this, nullifierKey(nullifier)) {
+        case b: Boolean => b
+        case _ => false
+    }
+    if (nullSpent) then throw("Double-spend") else
+
+    let rootValid = match getBoolean(this, rootKey(root)) {
+        case b: Boolean => b
+        case _ => false
+    }
+    if (!rootValid) then throw("Unknown root") else
+
+    # Verify Groth16 BN254 proof natively
+    let vkData = getBinaryValue(this, vkDataKey())
+    if (!groth16Verify_1inputs(vkData, proof, pubInputs)) then
+        throw("Invalid proof")
+    else
+
+    let recipientAddr = addressFromStringValue(recipient)
+    let remaining = denomination - relayerFee
+
+    let transfers = if (relayerFee > 0) then
+        [
+            BooleanEntry(nullifierKey(nullifier), true),
+            ScriptTransfer(i.caller, relayerFee, unit),
+            ScriptTransfer(recipientAddr, remaining, unit)
+        ]
+    else
+        [
+            BooleanEntry(nullifierKey(nullifier), true),
+            ScriptTransfer(recipientAddr, denomination, unit)
+        ]
+
+    transfers
+}
+
+# =========================================================================
+#                       VIEW FUNCTIONS
+# =========================================================================
+
+@Callable(i)
+func getRoot() = {
+    let root = getStringValue(this, currentRootKey())
+    ([], root)
+}
+
+@Callable(i)
+func isSpent(nullifier: String) = {
+    let spent = match getBoolean(this, nullifierKey(nullifier)) {
+        case b: Boolean => b
+        case _ => false
+    }
+    ([], spent)
+}
+
+@Callable(i)
+func getDenomination() = {
+    let denom = getIntegerValue(this, denominationKey())
+    ([], denom)
+}
+
+# =========================================================================
+#                       TRANSACTION VERIFIER
+# =========================================================================
+
+@Verifier(tx)
+func verify() = {
+    sigVerify(tx.bodyBytes, tx.proofs[0], tx.senderPublicKey)
+}

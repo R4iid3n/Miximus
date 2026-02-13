@@ -1,0 +1,102 @@
+{
+  "version": "2.0.0",
+  "description": "Miximus asset registry — BTC, ETH, USDT, USDC across Ethereum, Tron, and Bitcoin",
+
+  "chains": {
+    "ethereum": {
+      "chain_id": 1,
+      "name": "Ethereum",
+      "type": "evm",
+      "native_currency": "ETH",
+      "native_decimals": 18,
+      "rpc_url": "https://eth.llamarpc.com",
+      "explorer": "https://etherscan.io",
+      "supports_eip1559": true,
+      "snark_precompile": true
+    },
+    "tron": {
+      "chain_id": null,
+      "name": "Tron",
+      "type": "tvm",
+      "native_currency": "TRX",
+      "native_decimals": 6,
+      "rpc_url": "https://api.trongrid.io",
+      "explorer": "https://tronscan.org",
+      "supports_eip1559": false,
+      "snark_precompile": false
+    },
+    "bitcoin": {
+      "chain_id": null,
+      "name": "Bitcoin",
+      "type": "utxo",
+      "native_currency": "BTC",
+      "native_decimals": 8,
+      "rpc_url": "",
+      "explorer": "https://blockstream.info",
+      "supports_eip1559": false,
+      "snark_precompile": false
+    }
+  },
+
+  "assets": {
+    "native_coins": [
+      {
+        "symbol": "ETH",
+        "name": "Ethereum",
+        "chain": "ethereum",
+        "type": "native",
+        "decimals": 18,
+        "denomination": "60000000000000000",
+        "_note": "0.06 ETH"
+      },
+      {
+        "symbol": "BTC",
+        "name": "Bitcoin",
+        "chain": "bitcoin",
+        "type": "native",
+        "decimals": 8,
+        "denomination": "200000",
+        "_note": "0.002 BTC"
+      }
+    ],
+
+    "stablecoins": [
+      {
+        "symbol": "USDT",
+        "name": "Tether",
+        "chain": "ethereum",
+        "type": "erc20",
+        "decimals": 6,
+        "contract": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+        "denomination": "1000000"
+      },
+      {
+        "symbol": "USDT",
+        "name": "Tether",
+        "chain": "tron",
+        "type": "trc20",
+        "decimals": 6,
+        "contract": "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t",
+        "denomination": "1000000"
+      },
+      {
+        "symbol": "USDC",
+        "name": "USD Coin",
+        "chain": "ethereum",
+        "type": "erc20",
+        "decimals": 6,
+        "contract": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+        "denomination": "1000000"
+      },
+      {
+        "symbol": "USDC",
+        "name": "USD Coin",
+        "chain": "tron",
+        "type": "trc20",
+        "decimals": 6,
+        "contract": "TEkxiTehnzSmSe2XqrBj4w32RUN966rdz8",
+        "denomination": "1000000"
+      }
+    ]
+  }
+}

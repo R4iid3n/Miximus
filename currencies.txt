@@ -1,0 +1,199 @@
+0x / ERC-20 ecosystem
+
+Ethereum — 0x (ZRX)
+
+Ethereum — Chainlink (LINK ERC20)
+
+Ethereum — DAI (DAI ERC20)
+
+Ethereum — Decentraland (MANA)
+
+Ethereum — Enjin Coin (ENJ)
+
+Ethereum — Euro Tether (EURT)
+
+Ethereum — OMG Network (OMG ERC20)
+
+Ethereum — PancakeSwap (CAKE ERC20)
+
+Ethereum — PayPal USD (PYUSD)
+
+Ethereum — POL (POL ERC20)
+
+Ethereum — Shiba Inu (SHIB ERC20)
+
+Ethereum — Tether (USDT ERC20)
+
+Ethereum — TrueUSD (TUSD ERC20)
+
+Ethereum — Uniswap (UNI ERC20)
+
+Ethereum — USD Coin (USDC ERC20)
+
+Ethereum — Wrapped BTC (WBTC ERC20)
+
+Ethereum — Wrapped ETH (WETH ERC20)
+
+Ethereum — Yearn Finance (YFI ERC20)
+
+Native / L1 coins
+
+Bitcoin — BTC
+
+Bitcoin Cash — BCH
+
+Bitcoin Gold — BTG
+
+Bitcoin SV — BSV
+
+Litecoin — LTC
+
+Dogecoin — DOGE
+
+Dash — DASH
+
+Zcash — ZEC
+
+Ravencoin — RVN
+
+Verge — XVG
+
+Ethereum family / forks / L2
+
+Ethereum — ETH
+
+Ethereum Classic — ETC
+
+Arbitrum One — ARB
+
+Base — BASE
+
+BNB / Binance ecosystem
+
+BNB Chain (BEP20) — BNB
+
+Ethereum — BNB (ERC20)
+
+BNB Chain — Binance USD (BUSD BEP20)
+
+Ethereum — Binance USD (BUSD ERC20)
+
+Polygon — Binance USD (BUSD POLYGON)
+
+Avalanche — Binance USD (BUSD AVAX)
+
+BNB Chain — Bitcoin (BTC BEP2)
+
+BNB Chain — Chainlink (LINK BEP20)
+
+BNB Chain — DAI (DAI BEP20)
+
+BNB Chain — Ethereum (ETH BEP20)
+
+BNB Chain — PancakeSwap (CAKE BEP20)
+
+BNB Chain — Shiba Inu (SHIB BEP20)
+
+BNB Chain — Tether (USDT BEP20)
+
+BNB Chain — USD Coin (USDC BEP20)
+
+BNB Chain — Wrapped BNB (WBNB)
+
+BNB Chain — Wrapped ETH (WETH BEP20)
+
+BNB Chain — Yearn Finance (YFI BEP20)
+
+BNB Chain — BitTorrent (BTT BEP20)
+
+Avalanche ecosystem
+
+Avalanche — AVAX
+
+Avalanche — DAI
+
+Avalanche — Tether (USDT)
+
+Avalanche — USD Coin (USDC)
+
+Avalanche — Wrapped BTC (WBTC)
+
+Polygon ecosystem
+
+Polygon — POL
+
+Polygon — DAI
+
+Polygon — Tether (USDT)
+
+Polygon — USD Coin (USDC)
+
+Polygon — Wrapped BTC (WBTC)
+
+Polygon — Binance USD (BUSD)
+
+Tron ecosystem (TRC20)
+
+Tron — TRX
+
+Tron — Tether (USDT TRC20)
+
+Tron — USD Coin (USDC TRC20)
+
+Tron — TrueUSD (TUSD TRC20)
+
+Tron — Wrapped BTC (WBTC TRC20)
+
+Other major L1 chains
+
+Algorand — ALGO
+
+Cardano — ADA
+
+Solana — SOL
+
+Polkadot — DOT
+
+Cosmos — ATOM
+
+Near — NEAR
+
+Tezos — XTZ
+
+Toncoin — TON
+
+Stellar — XLM
+
+Ripple — XRP
+
+Terra — LUNA
+
+Additional networks / assets
+
+Cronos — CRO
+
+EOS — EOS
+
+ICON — ICX
+
+Komodo — KMD
+
+NEM — XEM
+
+NEO — NEO
+
+Ontology — ONT
+
+Qtum — QTUM
+
+Waves — WAVES
+
+VeChain — VET
+
+Holo — HOT
+
+Worldcoin — WLD
+
+Moonbeam / GLMR ecosystem
+
+Moonbeam — GLMR

@@ -1,0 +1,14 @@
+{
+  "name": "miximus-tron-deploy",
+  "version": "1.0.0",
+  "description": "Deploy Miximus mixer contracts on Tron (Nile testnet / mainnet)",
+  "scripts": {
+    "deploy:nile": "node deploy-nile.js",
+    "deploy:mainnet": "node deploy-mainnet.js"
+  },
+  "dependencies": {
+    "tronweb": "^6.0.0",
+    "solc": "0.8.19",
+    "dotenv": "^16.4.0"
+  }
+}

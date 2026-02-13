@@ -1,0 +1,11 @@
+flask==3.1.0
+flask-cors==5.0.1
+flask-sqlalchemy==3.1.1
+PyJWT==2.9.0
+eth-account==0.13.4
+web3==7.6.0
+python-dotenv==1.0.1
+gunicorn==23.0.0
+tronpy==0.4.0
+bit==0.8.0
+requests>=2.31.0

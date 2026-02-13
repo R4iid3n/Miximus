@@ -1,0 +1,55 @@
+# ==================== SECRETS ====================
+# Environment variables (private keys, API keys)
+.env
+.env.local
+.env.*.local
+# NOTE: .env.example is NOT ignored — it contains only placeholders
+
+# ==================== DEPENDENCIES ====================
+node_modules/
+
+# ==================== HARDHAT ====================
+cache/
+artifacts/
+typechain-types/
+
+# ==================== BUILD ARTIFACTS ====================
+build/
+ethsnarks-miximus/.build/
+*.so
+*.o
+*.a
+
+# ==================== KEYS ====================
+# zkSNARK proving/verifying keys (large binaries, regenerate from source)
+ethsnarks-miximus/.keys/
+
+# ==================== DATABASES ====================
+*.db
+*.sqlite
+*.sqlite3
+
+# ==================== PYTHON ====================
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.venv/
+*.egg-info/
+
+# ==================== FRONTEND ====================
+webapp/frontend/dist/
+
+# ==================== OS ====================
+.DS_Store
+Thumbs.db
+desktop.ini
+nul
+
+# ==================== IDE / TOOLS ====================
+.idea/
+.vscode/
+.claude/
+*.swp
+*.swo
+*~

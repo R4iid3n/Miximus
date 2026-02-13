@@ -1,0 +1,38 @@
+{
+  "network": "sepolia",
+  "chainId": 11155111,
+  "deployer": "0x6B4A4F918359fBE0288Ec707d411722E21FfA0b1",
+  "deployedAt": "2026-02-13T00:10:52.276Z",
+  "contracts": {
+    "ETH": {
+      "contract": "MiximusNative",
+      "address": "0x85A4ecCe24580f6d90adFFD74d9B061BD3A4f3c4",
+      "denomination": "0.06 ETH",
+      "denominationWei": "60000000000000000",
+      "symbol": "ETH",
+      "type": "native"
+    },
+    "USDT": {
+      "contract": "MiximusERC20",
+      "address": "0x7a958DBd4C3BDd7ff82ed3ffab5e895a8b49C4EA",
+      "tokenAddress": "0x82cd1ECEebA7FcFB60191bCB18AA9F259AB52495",
+      "denomination": "1 USDT",
+      "denominationWei": "1000000",
+      "symbol": "USDT",
+      "type": "erc20"
+    },
+    "USDC": {
+      "contract": "MiximusERC20",
+      "address": "0xBeB1B7eA73e18fA7E588f09C9154F2781E48578b",
+      "tokenAddress": "0xaDa8A85c68E49153FB114C0eE1b165B3B46a9611",
+      "denomination": "1 USDC",
+      "denominationWei": "1000000",
+      "symbol": "USDC",
+      "type": "erc20"
+    }
+  },
+  "tokens": {
+    "USDT": "0x82cd1ECEebA7FcFB60191bCB18AA9F259AB52495",
+    "USDC": "0xaDa8A85c68E49153FB114C0eE1b165B3B46a9611"
+  }
+}

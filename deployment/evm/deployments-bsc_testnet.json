@@ -1,0 +1,15 @@
+{
+  "network": "bsc_testnet",
+  "chainId": 97,
+  "contract": "MiximusNative",
+  "address": "0x85A4ecCe24580f6d90adFFD74d9B061BD3A4f3c4",
+  "denomination": "0.01",
+  "denominationWei": "10000000000000000",
+  "assetSymbol": "BNB",
+  "deployer": "0x6B4A4F918359fBE0288Ec707d411722E21FfA0b1",
+  "deployedAt": "2026-02-11T20:09:23.073Z",
+  "verifyingKey": {
+    "vkCount": 14,
+    "gammaABCCount": 4
+  }
+}

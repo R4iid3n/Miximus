@@ -1,0 +1,3 @@
+[submodule "ethsnarks-miximus"]
+	path = ethsnarks-miximus
+	url = https://github.com/HarryR/ethsnarks-miximus.git

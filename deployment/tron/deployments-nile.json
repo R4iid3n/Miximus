@@ -1,0 +1,29 @@
+{
+  "network": "nile",
+  "deployer": "TKkWKnpHc5N5txet3wpc5RTnLjCTZEkpaZ",
+  "deployedAt": "2026-02-13T01:17:58.203Z",
+  "contracts": {
+    "USDT": {
+      "contract": "MiximusTRC20",
+      "address": "TSCu8XbzpxAmdBvQjLRzzdzfckZVTRLAyr",
+      "tokenAddress": "TXLAQ63Xg1NAzckPwKHvzw7CSEmLMEqcdj",
+      "denomination": "1 USDT",
+      "denominationRaw": "1000000",
+      "symbol": "USDT",
+      "type": "trc20"
+    },
+    "USDC": {
+      "contract": "MiximusTRC20",
+      "address": "TDFddG1BhhgZvdDQEU8TZAj7XUkzNJckoh",
+      "tokenAddress": "TTh2LQ1m6o1cToLR3jmfBqYzp8MYMtMXXH",
+      "denomination": "1 USDC",
+      "denominationRaw": "1000000",
+      "symbol": "USDC",
+      "type": "trc20"
+    }
+  },
+  "tokens": {
+    "USDT": "TXLAQ63Xg1NAzckPwKHvzw7CSEmLMEqcdj",
+    "USDC": "TTh2LQ1m6o1cToLR3jmfBqYzp8MYMtMXXH"
+  }
+}

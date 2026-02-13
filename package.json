@@ -1,0 +1,38 @@
+{
+  "name": "miximus-multichain",
+  "version": "2.0.0",
+  "description": "Multi-chain Miximus zkSNARK mixer for all EVM chains",
+  "scripts": {
+    "compile": "hardhat compile",
+    "test": "hardhat test",
+    "deploy:ethereum": "hardhat run deployment/evm/deploy.js --network ethereum",
+    "deploy:bsc": "hardhat run deployment/evm/deploy.js --network bsc",
+    "deploy:polygon": "hardhat run deployment/evm/deploy.js --network polygon",
+    "deploy:avalanche": "hardhat run deployment/evm/deploy.js --network avalanche",
+    "deploy:arbitrum": "hardhat run deployment/evm/deploy.js --network arbitrum",
+    "deploy:base": "hardhat run deployment/evm/deploy.js --network base",
+    "deploy:optimism": "hardhat run deployment/evm/deploy.js --network optimism",
+    "deploy:sepolia": "hardhat run deployment/evm/deploy.js --network sepolia"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-chai-matchers": "^2.0.0",
+    "@nomicfoundation/hardhat-ethers": "^3.0.0",
+    "@nomicfoundation/hardhat-network-helpers": "^1.0.0",
+    "@nomicfoundation/hardhat-toolbox": "^4.0.0",
+    "@nomicfoundation/hardhat-verify": "^2.0.0",
+    "@typechain/ethers-v6": "^0.5.0",
+    "@typechain/hardhat": "^9.0.0",
+    "@types/chai": "^4.2.0",
+    "@types/mocha": ">=9.1.0",
+    "@types/node": ">=18.0.0",
+    "chai": "^4.2.0",
+    "dotenv": "^17.2.4",
+    "ethers": "^6.4.0",
+    "hardhat": "^2.19.0",
+    "hardhat-gas-reporter": "^1.0.8",
+    "solidity-coverage": "^0.8.0",
+    "ts-node": ">=8.0.0",
+    "typechain": "^8.3.0",
+    "typescript": ">=4.5.0"
+  }
+}

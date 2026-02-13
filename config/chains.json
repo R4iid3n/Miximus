@@ -1,0 +1,48 @@
+{
+  "description": "Quick-reference chain configuration for deployment tooling",
+
+  "evm_chains": {
+    "ethereum":          {"chain_id": 1,     "deploy_cmd": "npx hardhat run deploy.js --network ethereum"},
+    "bsc":               {"chain_id": 56,    "deploy_cmd": "npx hardhat run deploy.js --network bsc"},
+    "polygon":           {"chain_id": 137,   "deploy_cmd": "npx hardhat run deploy.js --network polygon"},
+    "avalanche":         {"chain_id": 43114, "deploy_cmd": "npx hardhat run deploy.js --network avalanche"},
+    "arbitrum":          {"chain_id": 42161, "deploy_cmd": "npx hardhat run deploy.js --network arbitrum"},
+    "base":              {"chain_id": 8453,  "deploy_cmd": "npx hardhat run deploy.js --network base"},
+    "optimism":          {"chain_id": 10,    "deploy_cmd": "npx hardhat run deploy.js --network optimism"},
+    "cronos":            {"chain_id": 25,    "deploy_cmd": "npx hardhat run deploy.js --network cronos"},
+    "moonbeam":          {"chain_id": 1284,  "deploy_cmd": "npx hardhat run deploy.js --network moonbeam"},
+    "ethereum_classic":  {"chain_id": 61,    "deploy_cmd": "npx hardhat run deploy.js --network ethereum_classic"},
+    "qtum":              {"chain_id": 81,    "deploy_cmd": "npx hardhat run deploy.js --network qtum"},
+    "vechain":           {"chain_id": 100009,"deploy_cmd": "npx hardhat run deploy.js --network vechain"}
+  },
+
+  "non_evm_chains": {
+    "tron":      {"deploy_tool": "tronbox", "contract_dir": "contracts/tron/"},
+    "solana":    {"deploy_tool": "anchor",  "contract_dir": "contracts/solana/"},
+    "cardano":   {"deploy_tool": "cardano-cli + plutus", "contract_dir": "contracts/cardano/"},
+    "cosmos":    {"deploy_tool": "wasmd / cosmwasm", "contract_dir": "contracts/cosmos/"},
+    "polkadot":  {"deploy_tool": "cargo-contract", "contract_dir": "contracts/polkadot/"},
+    "near":      {"deploy_tool": "near-cli", "contract_dir": "contracts/near/"},
+    "algorand":  {"deploy_tool": "algokit / goal", "contract_dir": "contracts/algorand/"},
+    "tezos":     {"deploy_tool": "smartpy / tezos-client", "contract_dir": "contracts/tezos/"},
+    "ton":       {"deploy_tool": "func / blueprint", "contract_dir": "contracts/ton/"},
+    "stellar":   {"deploy_tool": "soroban-cli", "contract_dir": "contracts/stellar/"},
+    "eos":       {"deploy_tool": "eosio-cpp / cleos", "contract_dir": "contracts/eos/"},
+    "neo":       {"deploy_tool": "neo-express / nccs", "contract_dir": "contracts/neo/"},
+    "waves":     {"deploy_tool": "surfboard / waves-cli", "contract_dir": "contracts/waves/"},
+    "icon":      {"deploy_tool": "tbears / goloop", "contract_dir": "contracts/icon/"}
+  },
+
+  "utxo_chains": {
+    "description": "UTXO chains use off-chain HTLC relay approach (no contract deployment needed)",
+    "chains": ["bitcoin", "bitcoin_cash", "bitcoin_gold", "bitcoin_sv", "litecoin",
+               "dogecoin", "dash", "zcash", "verge", "ravencoin", "komodo"],
+    "adapter": "contracts/utxo/miximus_htlc.py"
+  },
+
+  "relay_chains": {
+    "description": "Chains with limited smart contracts use relay/escrow approach",
+    "chains": ["ripple", "nem", "ontology"],
+    "adapter": "contracts/ripple/miximus_xrpl.py"
+  }
+}

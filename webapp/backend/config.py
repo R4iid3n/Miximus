@@ -24,11 +24,25 @@ class BaseConfig:
 
     # Custodial service settings
     SERVICE_WALLET_PRIVATE_KEY = os.environ.get('SERVICE_WALLET_PRIVATE_KEY', '')
-    COMMISSION_RATE = float(os.environ.get('COMMISSION_RATE', '0.015'))  # 1.5%
+    COMMISSION_RATE = float(os.environ.get('COMMISSION_RATE', '0.03'))  # 3%
     ORDER_EXPIRY_SECONDS = int(os.environ.get('ORDER_EXPIRY_SECONDS', '7200'))  # 2 hours
     MIN_CONFIRMATIONS = int(os.environ.get('MIN_CONFIRMATIONS', '3'))
     MIN_PROCESSING_DELAY = int(os.environ.get('MIN_PROCESSING_DELAY', '30'))
     MAX_PROCESSING_DELAY = int(os.environ.get('MAX_PROCESSING_DELAY', '300'))
+
+    # External fee wallets — mainnet (fees forwarded here after each withdrawal)
+    FEE_WALLET_EVM = os.environ.get('FEE_WALLET_EVM', '')
+    FEE_WALLET_TRON = os.environ.get('FEE_WALLET_TRON', '')
+    FEE_WALLET_BTC = os.environ.get('FEE_WALLET_BTC', '')
+    # External fee wallets — testnet
+    FEE_WALLET_EVM_TESTNET = os.environ.get('FEE_WALLET_EVM_TESTNET', '')
+    FEE_WALLET_TRON_TESTNET = os.environ.get('FEE_WALLET_TRON_TESTNET', '')
+    FEE_WALLET_BTC_TESTNET = os.environ.get('FEE_WALLET_BTC_TESTNET', '')
+
+    # Admin dashboard credentials
+    ADMIN_USERNAME = os.environ.get('ADMIN_USERNAME', 'admin')
+    ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD', '')
+    SECRET_KEY = os.environ.get('SECRET_KEY', '')
 
 
 class DevelopmentConfig(BaseConfig):

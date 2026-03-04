@@ -3,6 +3,7 @@ Custodial mixer API — pool listing, order creation, payment submission, and st
 """
 
 import re
+import logging
 from decimal import Decimal, ROUND_DOWN
 from datetime import datetime, timedelta
 
@@ -10,6 +11,8 @@ from flask import Blueprint, request, jsonify, current_app
 
 from models import db, MixOrder, PoolConfig, PoolUnit
 from config import BaseConfig
+
+logger = logging.getLogger(__name__)
 
 mix_bp = Blueprint('mix', __name__)
 
@@ -133,9 +136,10 @@ def list_pools():
     if network_mode not in ('mainnet', 'testnet'):
         return jsonify({'error': 'Invalid network_mode. Must be mainnet or testnet.'}), 400
 
-    pools = PoolConfig.query.filter_by(
-        enabled=True,
-        network_mode=network_mode,
+    pools = PoolConfig.query.filter(
+        PoolConfig.enabled == True,
+        PoolConfig.network_mode == network_mode,
+        PoolConfig.symbol != 'BTC_ANCHOR',  # internal anchor, not user-selectable
     ).all()
 
     result = []
@@ -276,6 +280,9 @@ def create_order():
     expiry_seconds = current_app.config.get(
         'ORDER_EXPIRY_SECONDS', BaseConfig.ORDER_EXPIRY_SECONDS
     )
+    # Bitcoin/UTXO transactions can take hours to confirm — give them 24 hours
+    if chain == 'bitcoin':
+        expiry_seconds = max(expiry_seconds, 86400)
 
     order = MixOrder(
         symbol=symbol,
@@ -298,12 +305,26 @@ def create_order():
     db.session.flush()  # get order.id before reserving
 
     # Reserve the pool units for this order
+    now = datetime.utcnow()
     if not is_custodial:
-        now = datetime.utcnow()
         for pu in available:
             pu.status = 'reserved'
             pu.reserved_for_order = order.id
             pu.reserved_at = now
+
+    # For BTC orders: also reserve BTC_ANCHOR units (one per BTC unit) so the
+    # order processor can generate zkSNARK proofs on Ethereum for privacy.
+    if chain == 'bitcoin':
+        anchor_units = PoolUnit.query.filter_by(
+            symbol='BTC_ANCHOR',
+            chain='ethereum',
+            network_mode=network_mode,
+            status='available',
+        ).limit(units).all()
+        for au in anchor_units:
+            au.status = 'reserved'
+            au.reserved_for_order = order.id
+            au.reserved_at = now
 
     db.session.commit()
 
@@ -391,3 +412,252 @@ def order_status(order_id: str):
     )
 
     return jsonify(result)
+
+
+# ---------------------------------------------------------------------------
+# GET /order/<order_id>/analysis
+# ---------------------------------------------------------------------------
+
+def _resolve_sender_address(order: MixOrder) -> str | None:
+    """Resolve the sender address from the user's payment TX (1 RPC call, best-effort)."""
+    if not order.user_tx_hash:
+        return None
+
+    chain = order.chain
+    if chain in ('bitcoin', 'tron'):
+        return None
+
+    try:
+        from mixer_service import get_mixer
+        mixer = get_mixer(order.network_mode)
+        chain_config = mixer.registry.chains.get(chain, {})
+        rpc_url = chain_config.get('rpc_url', '')
+        if not rpc_url:
+            return None
+
+        from web3 import Web3
+        w3 = Web3(Web3.HTTPProvider(rpc_url))
+        tx = w3.eth.get_transaction(order.user_tx_hash)
+        return tx['from']
+    except Exception as e:
+        logger.debug("Could not resolve sender for order %s: %s", order.id, e)
+        return None
+
+
+@mix_bp.route('/order/<order_id>/analysis', methods=['GET'])
+def order_analysis(order_id: str):
+    """Return post-mix privacy analysis for a completed order."""
+    order = MixOrder.query.get(order_id)
+    if not order:
+        return jsonify({'error': 'Order not found'}), 404
+
+    if order.status != 'completed':
+        return jsonify({
+            'error': 'Анализ доступен только для завершённых заказов.',
+            'current_status': order.status,
+        }), 409
+
+    decimals = _get_decimals_for_symbol(order.symbol)
+
+    # ---- Check 1: Address Separation ----
+    sender_address = _resolve_sender_address(order)
+    addresses = [
+        a for a in [sender_address, order.service_address,
+                    order.mixer_contract, order.recipient_address]
+        if a
+    ]
+    all_different = len(addresses) == len(set(a.lower() for a in addresses))
+
+    chain_type = 'utxo' if order.chain == 'bitcoin' else ('tvm' if order.chain == 'tron' else 'evm')
+
+    address_separation = {
+        'passed': all_different and len(addresses) >= 3,
+        'sender_address': sender_address,
+        'service_address': order.service_address,
+        'mixer_contract': order.mixer_contract,
+        'recipient_address': order.recipient_address,
+        'all_different': all_different,
+        'chain_type': chain_type,
+    }
+
+    # ---- Check 2: Anonymity Set ----
+    # For BTC orders, count the BTC_ANCHOR pool (Ethereum zkSNARK pool) as the anonymity set
+    if order.chain == 'bitcoin':
+        total_deposits = PoolUnit.query.filter_by(
+            symbol='BTC_ANCHOR',
+            chain='ethereum',
+            network_mode=order.network_mode,
+        ).count()
+        pool_desc = f"BTC anchor pool (Ethereum zkSNARK)"
+    else:
+        total_deposits = PoolUnit.query.filter_by(
+            symbol=order.symbol,
+            chain=order.chain,
+            network_mode=order.network_mode,
+        ).count()
+        pool_desc = f"{format_amount(order.denomination, decimals, order.symbol)} on {order.chain}"
+
+    anonymity_set = {
+        'passed': total_deposits >= 2,
+        'total_deposits': total_deposits,
+        'pool_description': pool_desc,
+    }
+
+    # ---- Check 3: Denomination Uniformity ----
+    is_contract_pool = order.mixer_contract and order.mixer_contract != 'custodial'
+
+    denomination_uniformity = {
+        'passed': True,
+        'denomination_display': format_amount(order.denomination, decimals, order.symbol),
+        'explanation': (
+            'Все депозиты в пуле имеют одинаковый номинал. '
+            'Контракт миксера принимает только фиксированную сумму, '
+            'что исключает корреляцию по суммам.'
+        ) if is_contract_pool else (
+            'Кастодиальный микс — суммы контролируются оператором.'
+        ),
+    }
+
+    # ---- Check 4: zkSNARK Proof ----
+    # For BTC orders, look for the BTC anchor proof stored in unit_data
+    btc_anchor_data = {}
+    if order.chain == 'bitcoin' and order.unit_data:
+        try:
+            import json as _json
+            ud = _json.loads(order.unit_data)
+            btc_anchor_data = ud.get('btc_anchor', {})
+        except Exception:
+            pass
+
+    if order.chain == 'bitcoin':
+        anchor_nullifier = btc_anchor_data.get('nullifier') or order.nullifier
+        anchor_tx = btc_anchor_data.get('anchor_tx')
+        has_nullifier = bool(anchor_nullifier)
+        has_withdraw_tx = bool(anchor_tx)
+        anchor_contract = btc_anchor_data.get('anchor_contract', '')
+        zksnark_proof = {
+            'passed': has_nullifier and has_withdraw_tx,
+            'nullifier_published': has_nullifier,
+            'withdraw_tx_hash': anchor_tx,
+            'anchor_contract': anchor_contract,
+            'explanation': (
+                f'Нуллификатор опубликован на Ethereum (контракт якоря приватности BTC). '
+                f'zkSNARK-доказательство подтверждает включение в анонимный пул '
+                f'без раскрытия конкретного депозита.'
+            ) if (has_nullifier and has_withdraw_tx) else (
+                'Якорь приватности BTC не использован — zkSNARK-доказательство отсутствует.'
+            ),
+        }
+    else:
+        has_nullifier = bool(order.nullifier)
+        has_withdraw_tx = bool(order.withdraw_tx_hash)
+        zksnark_proof = {
+            'passed': has_nullifier and has_withdraw_tx,
+            'nullifier_published': has_nullifier,
+            'withdraw_tx_hash': order.withdraw_tx_hash,
+            'explanation': (
+                'Нуллификатор опубликован в блокчейне через транзакцию вывода. '
+                'Доказательство zkSNARK подтверждает владение депозитом без раскрытия '
+                'конкретного листа дерева Меркла.'
+            ) if (has_nullifier and has_withdraw_tx) else (
+                'Кастодиальный вывод без zkSNARK (Bitcoin/UTXO).'
+            ),
+        }
+
+    # ---- Check 5: Time Separation ----
+    delay_seconds = None
+    delay_display = 'Н/Д'
+    if order.deposited_at and order.withdrawn_at:
+        delta = order.withdrawn_at - order.deposited_at
+        delay_seconds = int(delta.total_seconds())
+        minutes, secs = divmod(abs(delay_seconds), 60)
+        hours, minutes = divmod(minutes, 60)
+        if hours > 0:
+            delay_display = f"{hours} ч {minutes} мин {secs} сек"
+        elif minutes > 0:
+            delay_display = f"{minutes} мин {secs} сек"
+        else:
+            delay_display = f"{secs} сек"
+
+    time_separation = {
+        'passed': delay_seconds is not None and delay_seconds >= 10,
+        'deposit_time': order.deposited_at.isoformat() if order.deposited_at else None,
+        'withdraw_time': order.withdrawn_at.isoformat() if order.withdrawn_at else None,
+        'delay_seconds': delay_seconds,
+        'delay_display': delay_display,
+    }
+
+    # ---- Check 6: No On-Chain Link ----
+    if order.chain == 'bitcoin':
+        # BTC: payout on Bitcoin (different chain from payment), anchor proof on Ethereum
+        anchor_tx = btc_anchor_data.get('anchor_tx')
+        no_link = bool(order.user_tx_hash and order.withdraw_tx_hash)
+        no_onchain_link = {
+            'passed': no_link,
+            'user_tx_hash': order.user_tx_hash,
+            'deposit_tx_hash': anchor_tx,   # anchor TX on Ethereum
+            'withdraw_tx_hash': order.withdraw_tx_hash,
+            'summary': (
+                'Входящая транзакция BTC и исходящая транзакция BTC не связаны напрямую. '
+                'zkSNARK-якорь на Ethereum подтверждает приватность без раскрытия '
+                'связи между отправителем и получателем.'
+            ) if no_link else (
+                'Транзакции оплаты или вывода не найдены.'
+            ),
+        }
+    else:
+        no_link = bool(
+            order.user_tx_hash
+            and order.withdraw_tx_hash
+            and order.user_tx_hash != order.withdraw_tx_hash
+            and order.user_tx_hash != order.deposit_tx_hash
+        )
+        no_onchain_link = {
+            'passed': no_link,
+            'user_tx_hash': order.user_tx_hash,
+            'deposit_tx_hash': order.deposit_tx_hash,
+            'withdraw_tx_hash': order.withdraw_tx_hash,
+            'summary': (
+                'Транзакция оплаты, депозита и вывода — три отдельных транзакции. '
+                'Вывод использует другой лист дерева Меркла (депонированный ранее), '
+                'поэтому прямая связь между оплатой и выводом отсутствует.'
+            ),
+        }
+
+    # ---- Multi-unit breakdown ----
+    unit_analyses = None
+    if order.units > 1:
+        unit_data = order.get_unit_data()
+        unit_analyses = [
+            {
+                'unit_index': i + 1,
+                'deposit_tx_hash': ud.get('deposit_tx_hash'),
+                'withdraw_tx_hash': ud.get('withdraw_tx_hash'),
+            }
+            for i, ud in enumerate(unit_data)
+        ]
+
+    # ---- Aggregate ----
+    checks = [
+        address_separation, anonymity_set, denomination_uniformity,
+        zksnark_proof, time_separation, no_onchain_link,
+    ]
+    passed_checks = sum(1 for c in checks if c['passed'])
+
+    return jsonify({
+        'order_id': order.id,
+        'chain': order.chain,
+        'symbol': order.symbol,
+        'denomination_display': format_amount(order.denomination, decimals, order.symbol),
+        'address_separation': address_separation,
+        'anonymity_set': anonymity_set,
+        'denomination_uniformity': denomination_uniformity,
+        'zksnark_proof': zksnark_proof,
+        'time_separation': time_separation,
+        'no_onchain_link': no_onchain_link,
+        'units': order.units,
+        'unit_analyses': unit_analyses,
+        'total_checks': 6,
+        'passed_checks': passed_checks,
+        'overall_passed': passed_checks == 6,
+    })

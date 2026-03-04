@@ -130,10 +130,10 @@ class MixOrder(db.Model):
             unit_suffix = f' ({self.completed_units}/{self.units})'
 
         steps = [
-            {'name': 'Payment', 'tx_hash': self.user_tx_hash},
-            {'name': f'Deposit to Mixer{unit_suffix}', 'tx_hash': self.deposit_tx_hash},
-            {'name': f'Proof Generation{unit_suffix}', 'tx_hash': None},
-            {'name': f'Withdrawal{unit_suffix}', 'tx_hash': self.withdraw_tx_hash},
+            {'name': 'Оплата', 'tx_hash': self.user_tx_hash},
+            {'name': f'Депозит в миксер{unit_suffix}', 'tx_hash': self.deposit_tx_hash},
+            {'name': f'Генерация доказательства{unit_suffix}', 'tx_hash': None},
+            {'name': f'Вывод средств{unit_suffix}', 'tx_hash': self.withdraw_tx_hash},
         ]
 
         step_thresholds = [2, 4, 5, 7]

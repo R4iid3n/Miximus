@@ -4,6 +4,7 @@ import HeaderSimple from './components/HeaderSimple'
 import MixPage from './pages/MixPage'
 import PoolsPage from './pages/PoolsPage'
 import StatusPage from './pages/StatusPage'
+import AdminPage from './pages/AdminPage'
 
 export default function App() {
   const { networkMode, toggleNetworkMode } = useNetworkMode()
@@ -22,6 +23,7 @@ export default function App() {
             <Route path="/pools" element={<PoolsPage networkMode={networkMode} />} />
             <Route path="/status" element={<StatusPage />} />
             <Route path="/status/:orderId" element={<StatusPage />} />
+            <Route path="/admin" element={<AdminPage networkMode={networkMode} />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </main>

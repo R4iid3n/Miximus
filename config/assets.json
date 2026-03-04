@@ -1,7 +1,6 @@
 {
   "version": "2.0.0",
   "description": "Miximus asset registry — BTC, ETH, USDT, USDC across Ethereum, Tron, and Bitcoin",
-
   "chains": {
     "ethereum": {
       "chain_id": 1,
@@ -25,6 +24,17 @@
       "supports_eip1559": false,
       "snark_precompile": false
     },
+    "polygon": {
+      "chain_id": 137,
+      "name": "Polygon",
+      "type": "evm",
+      "native_currency": "MATIC",
+      "native_decimals": 18,
+      "rpc_url": "https://polygon-bor-rpc.publicnode.com",
+      "explorer": "https://polygonscan.com",
+      "supports_eip1559": true,
+      "snark_precompile": true
+    },
     "bitcoin": {
       "chain_id": null,
       "name": "Bitcoin",
@@ -37,7 +47,6 @@
       "snark_precompile": false
     }
   },
-
   "assets": {
     "native_coins": [
       {
@@ -55,11 +64,22 @@
         "chain": "bitcoin",
         "type": "native",
         "decimals": 8,
-        "denomination": "200000",
-        "_note": "0.002 BTC"
+        "denomination": "100000",
+        "_note": "0.001 BTC"
       }
     ],
-
+    "internal_coins": [
+      {
+        "symbol": "BTC_ANCHOR",
+        "name": "BTC Privacy Anchor (Polygon)",
+        "chain": "polygon",
+        "type": "native",
+        "decimals": 18,
+        "denomination": "1",
+        "mixer_contract": "0x85A4ecCe24580f6d90adFFD74d9B061BD3A4f3c4",
+        "_note": "1 wei MATIC — internal zkSNARK notary for BTC mainnet orders; not user-selectable. Run: npx hardhat run deployment/evm/deploy-btc-anchor-mainnet.js --network polygon"
+      }
+    ],
     "stablecoins": [
       {
         "symbol": "USDT",

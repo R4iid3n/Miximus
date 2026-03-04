@@ -1,0 +1,7 @@
+{
+  "network": "polygon",
+  "btc_anchor_contract": "0x85A4ecCe24580f6d90adFFD74d9B061BD3A4f3c4",
+  "denomination": "1",
+  "deployer": "0x6B4A4F918359fBE0288Ec707d411722E21FfA0b1",
+  "deployed_at": "2026-03-03T14:02:14.301Z"
+}

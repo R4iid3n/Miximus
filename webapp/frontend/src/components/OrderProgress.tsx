@@ -40,7 +40,7 @@ export default function OrderProgress({ steps, explorerUrl }: Props) {
           <div style={{ flex: 1 }}>
             <div style={{ color: '#fff', fontSize: 14, fontWeight: 500 }}>
               {step.name}
-              {step.status === 'in_progress' && <span style={{ color: '#ffc107', marginLeft: 8, fontSize: 12 }}>Processing...</span>}
+              {step.status === 'in_progress' && <span style={{ color: '#ffc107', marginLeft: 8, fontSize: 12 }}>Обработка...</span>}
             </div>
             {step.tx_hash && explorerUrl && (
               <a href={`${explorerUrl}/tx/${step.tx_hash}`} target="_blank" rel="noopener noreferrer"

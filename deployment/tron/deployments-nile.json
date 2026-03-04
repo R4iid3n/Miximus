@@ -5,12 +5,13 @@
   "contracts": {
     "USDT": {
       "contract": "MiximusTRC20",
-      "address": "TSCu8XbzpxAmdBvQjLRzzdzfckZVTRLAyr",
-      "tokenAddress": "TXLAQ63Xg1NAzckPwKHvzw7CSEmLMEqcdj",
+      "address": "TPbGEiZTcNZmfSoQUDtmuH9KjWMaE5b4pH",
+      "tokenAddress": "TBPXNb9Adhs4hRVUin4TqFnBngVgQ1TLHR",
       "denomination": "1 USDT",
       "denominationRaw": "1000000",
       "symbol": "USDT",
-      "type": "trc20"
+      "type": "trc20",
+      "note": "Uses TestTRC20 — avoids TXYZop transfer() bug"
     },
     "USDC": {
       "contract": "MiximusTRC20",
@@ -23,7 +24,8 @@
     }
   },
   "tokens": {
-    "USDT": "TXLAQ63Xg1NAzckPwKHvzw7CSEmLMEqcdj",
+    "USDT": "TBPXNb9Adhs4hRVUin4TqFnBngVgQ1TLHR",
     "USDC": "TTh2LQ1m6o1cToLR3jmfBqYzp8MYMtMXXH"
-  }
+  },
+  "lastUsdtRedeploy": "2026-03-01T00:21:48.217Z"
 }

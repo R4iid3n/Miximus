@@ -52,6 +52,7 @@ MIXER_NATIVE_ABI = [
     {
         "type": "event",
         "name": "Deposit",
+        "anonymous": False,
         "inputs": [
             {"name": "leafHash", "type": "uint256", "indexed": True},
             {"name": "leafIndex", "type": "uint256", "indexed": True},
@@ -88,6 +89,7 @@ MIXER_ERC20_ABI = [
     {
         "type": "event",
         "name": "Deposit",
+        "anonymous": False,
         "inputs": [
             {"name": "leafHash", "type": "uint256", "indexed": True},
             {"name": "leafIndex", "type": "uint256", "indexed": True},
@@ -96,7 +98,7 @@ MIXER_ERC20_ABI = [
     },
 ]
 
-# Minimal ERC20 ABI: approve + Transfer event (for payment verification)
+# Minimal ERC20 ABI: approve, transfer + Transfer event
 ERC20_TOKEN_ABI = [
     {
         "type": "function",
@@ -109,8 +111,19 @@ ERC20_TOKEN_ABI = [
         "stateMutability": "nonpayable",
     },
     {
+        "type": "function",
+        "name": "transfer",
+        "inputs": [
+            {"name": "to", "type": "address"},
+            {"name": "amount", "type": "uint256"},
+        ],
+        "outputs": [{"name": "", "type": "bool"}],
+        "stateMutability": "nonpayable",
+    },
+    {
         "type": "event",
         "name": "Transfer",
+        "anonymous": False,
         "inputs": [
             {"name": "from", "type": "address", "indexed": True},
             {"name": "to", "type": "address", "indexed": True},
@@ -135,9 +148,9 @@ class ServiceWallet:
         4. Later, ``withdraw_via_relayer`` executes the withdrawal for the user.
     """
 
-    # Default gas limits (can be overridden per-call via kwargs if needed)
-    DEFAULT_DEPOSIT_GAS = 500_000
-    DEFAULT_WITHDRAW_GAS = 600_000
+    # Default gas limits — MiMC Merkle tree ops are gas-heavy (~2.2M for depth-29)
+    DEFAULT_DEPOSIT_GAS = 2_500_000
+    DEFAULT_WITHDRAW_GAS = 2_500_000
     DEFAULT_APPROVE_GAS = 100_000
 
     def __init__(self, private_key: str, rpc_urls: Dict[str, str]):
@@ -384,7 +397,8 @@ class ServiceWallet:
 
             contract_addr = Web3.to_checksum_address(contract_address)
             nonce = w3.eth.get_transaction_count(self._address)
-            gas_price = w3.eth.gas_price
+            # Use 2x gas price to ensure fast inclusion on testnets
+            gas_price = max(w3.eth.gas_price * 2, w3.to_wei(1, 'gwei'))
 
             if not is_native:
                 # ---- ERC20 path: approve then deposit ----
@@ -414,7 +428,7 @@ class ServiceWallet:
                 approve_hash = w3.eth.send_raw_transaction(
                     signed_approve.raw_transaction
                 )
-                w3.eth.wait_for_transaction_receipt(approve_hash)
+                w3.eth.wait_for_transaction_receipt(approve_hash, timeout=300)
                 nonce += 1
 
                 # Step 2: deposit (no msg.value for ERC20)
@@ -445,7 +459,7 @@ class ServiceWallet:
                 deposit_tx, self._private_key
             )
             tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
-            receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
+            receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=300)
 
             if receipt.status != 1:
                 result["error"] = "Deposit transaction reverted"
@@ -542,7 +556,7 @@ class ServiceWallet:
             mixer = w3.eth.contract(address=contract_addr, abi=abi)
 
             nonce = w3.eth.get_transaction_count(self._address)
-            gas_price = w3.eth.gas_price
+            gas_price = max(w3.eth.gas_price * 2, w3.to_wei(1, 'gwei'))
 
             # Ensure proof_points is exactly 8 uint256 values
             if len(proof_points) != 8:
@@ -798,3 +812,113 @@ class MultiChainWallet:
             root=root, nullifier=nullifier, proof_points=proof_points,
             recipient=recipient, relayer_fee=relayer_fee, is_native=is_native,
         )
+
+    # ------------------------------------------------------------------
+    # Forward fee to external wallet
+    # ------------------------------------------------------------------
+
+    def forward_fee(self, chain: str, rpc_url: str, fee_wallet: str,
+                    amount: int, is_native: bool = True,
+                    token_address: Optional[str] = None,
+                    network_mode: str = 'testnet') -> dict:
+        """
+        Send collected fee from the service wallet to an external fee wallet.
+
+        Parameters
+        ----------
+        chain : str
+            Chain identifier (e.g. "ethereum", "tron", "bitcoin").
+        rpc_url : str
+            RPC endpoint for the target chain.
+        fee_wallet : str
+            Destination address for the fee.
+        amount : int
+            Fee amount in the token's smallest unit.
+        is_native : bool
+            True for native currency (ETH), False for ERC20 (USDT/USDC).
+        token_address : str, optional
+            ERC20 token contract address (required when is_native=False).
+        network_mode : str
+            'testnet' or 'mainnet'.
+
+        Returns
+        -------
+        dict
+            {success, tx_hash, error}
+        """
+        result = {'success': False, 'tx_hash': '', 'error': None}
+        chain_type = get_chain_type(chain)
+
+        try:
+            if chain_type == 'utxo':
+                adapter = self._get_btc_adapter(network_mode)
+                tx_hash = adapter.send_btc(fee_wallet, amount)
+                result['success'] = True
+                result['tx_hash'] = tx_hash
+                return result
+
+            if chain_type == 'tvm':
+                adapter = self._get_tron_adapter(rpc_url)
+                if token_address:
+                    tx_hash = adapter.transfer_trc20(token_address, fee_wallet, amount)
+                else:
+                    tx_hash = adapter.transfer_trx(fee_wallet, amount)
+                result['success'] = True
+                result['tx_hash'] = tx_hash
+                return result
+
+            # EVM
+            w3 = self._evm_wallet.get_web3(chain, rpc_url)
+            address = self._evm_wallet.get_address()
+            nonce = w3.eth.get_transaction_count(address)
+            gas_price = w3.eth.gas_price
+
+            if is_native:
+                tx = {
+                    'from': address,
+                    'to': Web3.to_checksum_address(fee_wallet),
+                    'value': amount,
+                    'nonce': nonce,
+                    'gas': 21_000,
+                    'gasPrice': gas_price,
+                    'chainId': w3.eth.chain_id,
+                }
+            else:
+                if not token_address:
+                    result['error'] = 'token_address required for ERC20 fee forwarding'
+                    return result
+                token = w3.eth.contract(
+                    address=Web3.to_checksum_address(token_address),
+                    abi=ERC20_TOKEN_ABI,
+                )
+                tx = token.functions.transfer(
+                    Web3.to_checksum_address(fee_wallet), amount,
+                ).build_transaction({
+                    'from': address,
+                    'nonce': nonce,
+                    'gas': 100_000,
+                    'gasPrice': gas_price,
+                })
+
+            signed = w3.eth.account.sign_transaction(
+                tx, self._evm_wallet._private_key,
+            )
+            tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
+            receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
+
+            result['tx_hash'] = tx_hash.hex()
+            if receipt.status != 1:
+                result['error'] = 'Fee forwarding transaction reverted'
+                return result
+
+            result['success'] = True
+            logger.info(
+                "Forwarded fee %s to %s on %s (tx=%s)",
+                amount, fee_wallet, chain, result['tx_hash'],
+            )
+
+        except Exception as exc:
+            result['error'] = f"Fee forwarding failed: {exc}"
+            logger.exception("forward_fee error on %s", chain)
+
+        return result

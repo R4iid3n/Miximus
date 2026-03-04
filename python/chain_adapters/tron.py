@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_FEE_LIMIT = 150_000_000      # 150 TRX — sufficient for most contract calls
 APPROVE_FEE_LIMIT = 50_000_000       # 50 TRX — for TRC20 approve()
 DEPOSIT_FEE_LIMIT = 200_000_000      # 200 TRX — deposit touches Merkle tree
-WITHDRAW_FEE_LIMIT = 300_000_000     # 300 TRX — withdraw runs pairing check
+WITHDRAW_FEE_LIMIT = 1_000_000_000   # 1000 TRX — withdraw: pairing check + 2 token transfers
 BATCH_FEE_LIMIT_PER_ITEM = 200_000_000  # additional per batch item
 
 # Transaction confirmation polling
@@ -495,30 +495,34 @@ class TronAdapter:
                 continue
 
             topics = log_entry.get("topics", [])
-            if len(topics) < 3:
+            if not topics or topics[0] != transfer_topic:
                 continue
 
-            if topics[0] != transfer_topic:
-                continue
-
-            # topics[1] = from address (zero-padded to 32 bytes, hex)
-            # topics[2] = to address (zero-padded to 32 bytes, hex)
-            log_to_hex = topics[2][-40:]  # last 20 bytes (EVM-style)
-            # Convert our address to hex for comparison
+            data_hex = log_entry.get("data", "") or ""
             my_addr_hex = self._base58_to_hex(my_address)
 
-            if log_to_hex.lower() != my_addr_hex.lower():
-                continue
-
-            # Data field contains the amount
-            data_hex = log_entry.get("data", "")
-            if not data_hex:
-                continue
-            actual_amount = int(data_hex, 16)
-
-            # Extract sender from topics[1]
-            sender_hex = topics[1][-40:]
-            sender_addr = self._hex_to_base58(sender_hex)
+            if len(topics) >= 3:
+                # Standard indexed Transfer(address indexed from, address indexed to, uint256 value)
+                # topics[1]=from, topics[2]=to, data=amount
+                log_to_hex = topics[2][-40:]
+                if log_to_hex.lower() != my_addr_hex.lower():
+                    continue
+                if not data_hex:
+                    continue
+                actual_amount = int(data_hex, 16)
+                sender_hex = topics[1][-40:]
+                sender_addr = self._hex_to_base58(sender_hex)
+            else:
+                # Non-indexed Transfer(address from, address to, uint256 value)
+                # data = abi.encode(from[32], to[32], amount[32]) = 192 hex chars
+                if len(data_hex) < 192:
+                    continue
+                sender_hex = data_hex[24:64]      # bytes 12-31 of word 0 (20-byte addr)
+                log_to_hex = data_hex[88:128]     # bytes 12-31 of word 1
+                actual_amount = int(data_hex[128:192], 16)  # word 2
+                if log_to_hex.lower() != my_addr_hex.lower():
+                    continue
+                sender_addr = self._hex_to_base58(sender_hex)
 
             if actual_amount >= expected_amount:
                 return {
@@ -576,6 +580,24 @@ class TronAdapter:
         my_address = self.get_address()
 
         try:
+            # Pre-flight: verify service wallet has enough tokens
+            _token_check = self._get_contract(token_address, abi=TRC20_TOKEN_ABI)
+            _balance = _token_check.functions.balanceOf(my_address)
+            logger.info(
+                "TRC20 pre-deposit balance: %d (denomination=%d) [token=%s, wallet=%s]",
+                _balance, denomination, token_address, my_address
+            )
+            if _balance < denomination:
+                return DepositResult(
+                    success=False, tx_hash="", leaf_index=-1, new_root="",
+                    chain="tron", asset="TRC20",
+                    amount=str(denomination),
+                    error=(
+                        f"Insufficient token balance: have {_balance}, "
+                        f"need {denomination} (token={token_address})"
+                    ),
+                )
+
             # Step 1: Ensure sufficient TRC20 allowance
             self._ensure_allowance(token_address, mixer_address, denomination)
 
@@ -640,7 +662,7 @@ class TronAdapter:
             required_amount: Minimum allowance needed.
 
         Raises:
-            RuntimeError: If approval transaction fails.
+            RuntimeError: If approval transaction fails or allowance cannot be verified.
         """
         self._ensure_client()
         my_address = self.get_address()
@@ -649,11 +671,33 @@ class TronAdapter:
 
         # Check current allowance
         current_allowance = token.functions.allowance(my_address, spender_address)
+        logger.info(
+            "Current allowance: %d (required: %d) [owner=%s, spender=%s]",
+            current_allowance, required_amount, my_address, spender_address
+        )
         if current_allowance >= required_amount:
-            logger.debug(
-                "Allowance sufficient: %d >= %d", current_allowance, required_amount
-            )
+            logger.info("Allowance sufficient — skipping approve")
             return
+
+        # Some USDT-style tokens (Tether) require resetting allowance to 0
+        # before setting a new non-zero value (anti-front-running mechanism).
+        if current_allowance > 0:
+            logger.info(
+                "Resetting existing allowance %d → 0 (Tether-style double-spend prevention)",
+                current_allowance
+            )
+            reset_txn = (
+                token.functions.approve(spender_address, 0)
+                .with_owner(my_address)
+                .fee_limit(APPROVE_FEE_LIMIT)
+                .build()
+            )
+            signed_reset = reset_txn.sign(self._priv_key)
+            reset_result = signed_reset.broadcast()
+            reset_hash = reset_result.get("txid", "")
+            if reset_hash:
+                self._wait_for_tx(reset_hash)
+                logger.info("Allowance reset confirmed: %s", reset_hash)
 
         # Approve the exact required amount
         logger.info(
@@ -675,6 +719,21 @@ class TronAdapter:
         # Wait for approval to confirm before proceeding
         self._wait_for_tx(tx_hash)
         logger.info("Approve TX confirmed: %s", tx_hash)
+
+        # Verify the allowance was actually set — some non-standard tokens
+        # (e.g. Tron testnet tokens with custom approve logic) accept the TX
+        # without actually updating the allowance mapping.
+        actual_allowance = token.functions.allowance(my_address, spender_address)
+        logger.info(
+            "Post-approve allowance: %d (required: %d)",
+            actual_allowance, required_amount
+        )
+        if actual_allowance < required_amount:
+            raise RuntimeError(
+                f"Approve TX confirmed (txid={tx_hash}) but on-chain allowance "
+                f"is still {actual_allowance} (need {required_amount}). "
+                f"Token {token_address} does not support standard ERC20 allowances."
+            )
 
     def _parse_deposit_event(self, tx_info: dict) -> int:
         """
@@ -764,6 +823,29 @@ class TronAdapter:
                 )
 
             mixer = self._get_contract(mixer_address, abi=MIXER_ABI)
+
+            # Pre-withdrawal diagnostics — log mixer token balance and amounts
+            try:
+                token_addr = mixer.functions.token()
+                _token_diag = self._get_contract(token_addr, abi=TRC20_TOKEN_ABI)
+                mixer_balance = _token_diag.functions.balanceOf(mixer_address)
+                denomination = mixer.functions.denomination()
+                payout = denomination - relayer_fee
+                logger.info(
+                    "Pre-withdrawal: mixer_balance=%d, denomination=%d, "
+                    "relayer_fee=%d, payout=%d, recipient=%s, fee_limit=%d SUN",
+                    mixer_balance, denomination, relayer_fee, payout,
+                    recipient, WITHDRAW_FEE_LIMIT,
+                )
+                if mixer_balance < denomination:
+                    raise RuntimeError(
+                        f"Mixer token balance too low: {mixer_balance} < {denomination}. "
+                        f"Pool needs to be seeded before withdrawals."
+                    )
+            except RuntimeError:
+                raise
+            except Exception as _diag_err:
+                logger.warning("Pre-withdrawal diagnostics failed: %s", _diag_err)
 
             txn = (
                 mixer.functions.withdrawViaRelayer(
@@ -1006,19 +1088,26 @@ class TronAdapter:
         try:
             from tronpy.keys import to_hex_address
             expected_hex = to_hex_address(expected_base58)
-            # Normalize: strip 41 prefix if present, compare lowercase
+            norm_expected = expected_hex.lower()
+            if norm_expected.startswith("41") and len(norm_expected) == 42:
+                norm_expected = norm_expected[2:]
+
+            # tronpy sometimes returns log addresses already in base58 (T..., 34 chars)
+            if log_address.startswith("T") and len(log_address) == 34:
+                log_hex = to_hex_address(log_address)
+                norm_log = log_hex.lower()
+                if norm_log.startswith("41") and len(norm_log) == 42:
+                    norm_log = norm_log[2:]
+                return norm_log == norm_expected
+
+            # Otherwise treat as hex
             norm_log = log_address.lower().lstrip("0x")
             if norm_log.startswith("41") and len(norm_log) == 42:
                 norm_log = norm_log[2:]
             elif len(norm_log) == 40:
                 pass  # already 20 bytes
             else:
-                # Might be zero-padded (64 chars)
                 norm_log = norm_log[-40:]
-
-            norm_expected = expected_hex.lower()
-            if norm_expected.startswith("41") and len(norm_expected) == 42:
-                norm_expected = norm_expected[2:]
 
             return norm_log == norm_expected
         except Exception:
@@ -1034,3 +1123,92 @@ class TronAdapter:
         except Exception:
             addr = "not-initialized"
         return f"<TronAdapter rpc={self._rpc_url} address={addr}>"
+
+
+# =============================================================================
+#              ChainAdapter-compatible wrapper (read-only Merkle queries)
+# =============================================================================
+
+class TronChainAdapter(ChainAdapter):
+    """
+    ChainAdapter wrapper around TronAdapter for Tron contracts.
+
+    Provides the standardized get_root() / get_path(leaf_index) interface
+    that order_processor uses for zkSNARK proof generation.
+
+    Uses a dummy (value=1) private key for tronpy client initialization —
+    read-only view calls on Tron do not require a signing key.
+    The actual deposit/withdrawal signing is done separately by
+    MultiChainWallet → TronAdapter in wallet_service.py.
+    """
+
+    # Dummy secp256k1 private key (value = 1) — valid range, never signs anything.
+    _DUMMY_KEY = "0000000000000000000000000000000000000000000000000000000000000001"
+
+    def __init__(self, rpc_url: str, contract_address: str,
+                 symbol: str, denomination: int,
+                 is_token: bool = False,
+                 token_address: Optional[str] = None):
+        super().__init__(
+            chain_id="tron",
+            chain_type=ChainType.TVM,
+            rpc_url=rpc_url,
+            native_symbol=symbol,
+            denomination=denomination,
+        )
+        self.contract_address = contract_address
+        self.is_token = is_token
+        self.token_address = token_address
+        self._inner: Optional[TronAdapter] = None
+
+    def _get_inner(self) -> TronAdapter:
+        if self._inner is None:
+            self._inner = TronAdapter(self._DUMMY_KEY, self.rpc_url)
+        return self._inner
+
+    def connect(self) -> bool:
+        try:
+            self._get_inner()
+            return True
+        except Exception:
+            return False
+
+    def get_root(self) -> int:
+        return self._get_inner().get_root(self.contract_address)
+
+    def get_path(self, leaf_index: int) -> Tuple[List[int], List[bool]]:
+        return self._get_inner().get_path(self.contract_address, leaf_index)
+
+    def is_spent(self, nullifier: int) -> bool:
+        return self._get_inner().is_spent(self.contract_address, nullifier)
+
+    def get_balance(self) -> int:
+        """Return the TRC20 token balance held by the mixer contract."""
+        if self.is_token and self.token_address:
+            try:
+                inner = self._get_inner()
+                token = inner._get_contract(self.token_address, abi=TRC20_TOKEN_ABI)
+                return token.functions.balanceOf(self.contract_address)
+            except Exception:
+                return 0
+        return 0
+
+    # Signing operations are not supported in read-only mode.
+    def deposit(self, leaf_hash: int, private_key: str) -> DepositResult:
+        raise NotImplementedError("Use MultiChainWallet for Tron deposits")
+
+    def batch_deposit(self, leaf_hashes: List[int], private_key: str) -> BatchDepositResult:
+        raise NotImplementedError("Use MultiChainWallet for Tron deposits")
+
+    def withdraw(self, proof: ProofData, recipient: str, private_key: str) -> WithdrawResult:
+        raise NotImplementedError("Use MultiChainWallet for Tron withdrawals")
+
+    def batch_withdraw(self, proofs: List[ProofData], recipient: str,
+                       private_key: str) -> BatchWithdrawResult:
+        raise NotImplementedError("Use MultiChainWallet for Tron withdrawals")
+
+    def __repr__(self) -> str:
+        return (
+            f"<TronChainAdapter rpc={self.rpc_url} "
+            f"contract={self.contract_address} symbol={self.native_symbol}>"
+        )

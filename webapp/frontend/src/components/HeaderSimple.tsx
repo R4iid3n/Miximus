@@ -22,9 +22,10 @@ export default function HeaderSimple({ networkMode, onToggleNetwork }: Props) {
         </Link>
         <nav style={{ display: 'flex', gap: 16 }}>
           {[
-            { path: '/', label: 'Mixer' },
-            { path: '/pools', label: 'Pools' },
-            { path: '/status', label: 'Track' },
+            { path: '/', label: 'Миксер' },
+            { path: '/pools', label: 'Пулы' },
+            { path: '/status', label: 'Отследить' },
+            { path: '/admin', label: 'Адмін' },
           ].map(({ path, label }) => (
             <Link key={path} to={path} style={{
               color: isActive(path) ? '#6c5ce7' : '#888',
@@ -43,7 +44,7 @@ export default function HeaderSimple({ networkMode, onToggleNetwork }: Props) {
         border: `1px solid ${networkMode === 'testnet' ? '#ffc107' : '#4caf50'}`,
         borderRadius: 20, padding: '6px 16px', cursor: 'pointer', fontSize: 13, fontWeight: 600,
       }}>
-        {networkMode === 'testnet' ? 'TESTNET' : 'MAINNET'}
+        {networkMode === 'testnet' ? 'ТЕСТНЕТ' : 'ОСНОВНАЯ СЕТЬ'}
       </button>
     </header>
   )

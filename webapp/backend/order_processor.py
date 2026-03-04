@@ -18,6 +18,8 @@ Bitcoin custodial shortcut (no contract/proof):
 Also handles: failed, expired states + releasing reserved PoolUnits on expiry.
 """
 
+import json
+import os
 import threading
 import time
 import hashlib
@@ -51,6 +53,18 @@ class OrderProcessor:
     def __init__(self, app):
         self.app = app
         self._wallet = None
+        self._fee_wallets = {
+            'mainnet': {
+                'evm':  app.config.get('FEE_WALLET_EVM',  ''),
+                'tvm':  app.config.get('FEE_WALLET_TRON', ''),
+                'utxo': app.config.get('FEE_WALLET_BTC',  ''),
+            },
+            'testnet': {
+                'evm':  app.config.get('FEE_WALLET_EVM_TESTNET',  ''),
+                'tvm':  app.config.get('FEE_WALLET_TRON_TESTNET', ''),
+                'utxo': app.config.get('FEE_WALLET_BTC_TESTNET',  ''),
+            },
+        }
 
     def _get_wallet(self) -> MultiChainWallet:
         """Lazily initialize the MultiChainWallet from app config."""
@@ -82,6 +96,22 @@ class OrderProcessor:
         logger.info("OrderProcessor background thread started")
 
     def _run_loop(self):
+        logger.info("OrderProcessor loop starting (PID=%s, thread=%s)",
+                     os.getpid(), threading.current_thread().name)
+        # On startup, reset any orders stuck mid-flight from a previous crash
+        with self.app.app_context():
+            stuck = MixOrder.query.filter(
+                MixOrder.status.in_(['depositing', 'withdrawing'])
+            ).all()
+            for o in stuck:
+                logger.warning(
+                    "Resetting stuck order %s from '%s' → 'payment_confirmed'", o.id, o.status
+                )
+                o.status = 'payment_confirmed'
+            if stuck:
+                db.session.commit()
+
+        cycle = 0
         while True:
             try:
                 with self.app.app_context():
@@ -89,6 +119,9 @@ class OrderProcessor:
                     self.process_confirmed_payments()
                     self.process_deposited_orders()
                     self.expire_stale_orders()
+                cycle += 1
+                if cycle % 30 == 1:  # log heartbeat every ~5 minutes
+                    logger.info("OrderProcessor heartbeat — cycle %d", cycle)
             except Exception as e:
                 logger.error(f"OrderProcessor cycle error: {e}", exc_info=True)
 
@@ -161,6 +194,7 @@ class OrderProcessor:
                     order.error_message = (
                         f"No pool config for {order.symbol}/{order.chain}/{order.network_mode}"
                     )
+                    self._release_reserved_units(order)
                     db.session.commit()
                     continue
 
@@ -184,9 +218,16 @@ class OrderProcessor:
                     if 'not found' in error.lower() or 'reverted' in error.lower():
                         order.status = 'failed'
                         order.error_message = error
+                        self._release_reserved_units(order)
                         db.session.commit()
                         logger.warning(f"Order {order.id}: payment failed — {error}")
                         continue
+                    # Log non-fatal errors so they don't silently swallow
+                    logger.warning(
+                        f"Order {order.id}: payment verification issue — {error} "
+                        f"(will retry)"
+                    )
+                    continue
 
                 if (
                     verification.get('verified')
@@ -200,11 +241,19 @@ class OrderProcessor:
                         f"({verification['confirmations']} confirmations, "
                         f"{order.units} unit(s))"
                     )
+                else:
+                    confs = verification.get('confirmations', 0)
+                    verified = verification.get('verified', False)
+                    logger.debug(
+                        f"Order {order.id}: waiting — verified={verified}, "
+                        f"confirmations={confs}/{pool.min_confirmations}"
+                    )
 
             except Exception as e:
                 logger.error(f"Order {order.id}: error verifying payment — {e}", exc_info=True)
                 order.status = 'failed'
                 order.error_message = f"Payment verification error: {str(e)}"
+                self._release_reserved_units(order)
                 db.session.commit()
 
     # ------------------------------------------------------------------
@@ -265,6 +314,7 @@ class OrderProcessor:
                 if not deposit_result.get('success'):
                     order.status = 'failed'
                     order.error_message = deposit_result.get('error', 'Deposit to mixer failed')
+                    self._release_reserved_units(order)
                     db.session.commit()
                     logger.error(f"Order {order.id}: deposit failed — {order.error_message}")
                     continue
@@ -309,11 +359,126 @@ class OrderProcessor:
                 logger.error(f"Order {order.id}: deposit error — {e}", exc_info=True)
                 order.status = 'failed'
                 order.error_message = f"Deposit error: {str(e)}"
+                self._release_reserved_units(order)
                 db.session.commit()
 
     def _process_btc_withdrawal(self, order: MixOrder):
-        """Handle BTC custodial flow: send total payout directly."""
+        """Handle BTC order: zkSNARK anchor proof on Ethereum + BTC payout.
+
+        Flow:
+        1. If a BTC_ANCHOR pool unit is reserved for this order, generate a
+           zkSNARK proof via the anchor contract on Ethereum and publish the
+           nullifier on-chain. This gives post-mix privacy analysis.
+        2. Send the BTC payout to the recipient's Bitcoin address.
+        3. Forward the operator fee to the configured BTC fee wallet.
+        """
         try:
+            # ----------------------------------------------------------------
+            # Step 1: zkSNARK anchor proof on Ethereum (best-effort)
+            # ----------------------------------------------------------------
+            anchor_data = {}
+            anchor_unit = PoolUnit.query.filter_by(
+                symbol='BTC_ANCHOR',
+                chain='ethereum',
+                reserved_for_order=order.id,
+                status='reserved',
+            ).order_by(PoolUnit.id).first()
+
+            if anchor_unit:
+                logger.info(
+                    f"Order {order.id}: generating BTC anchor proof "
+                    f"(PoolUnit #{anchor_unit.id}, leaf={anchor_unit.leaf_index})"
+                )
+                order.status = 'proving'
+                db.session.commit()
+
+                try:
+                    anchor_contract = anchor_unit.mixer_contract
+                    anchor_rpc_url = self._get_rpc_url('ethereum', order.network_mode)
+                    mixer = get_mixer(order.network_mode)
+                    wallet = self._get_wallet()
+                    service_addr = wallet.get_evm_address()
+
+                    # Get anchor asset for the adapter
+                    anchor_asset = mixer.registry.get_asset('BTC_ANCHOR', 'ethereum')
+                    if not anchor_asset:
+                        raise RuntimeError("BTC_ANCHOR asset not found in registry")
+
+                    adapter = mixer._get_adapter(anchor_asset)
+
+                    secret = int(anchor_unit.secret)
+                    leaf_index = anchor_unit.leaf_index
+
+                    root = adapter.get_root()
+                    path, address_bits = adapter.get_path(leaf_index)
+
+                    # ext_hash for anchor: uses the anchor contract + service wallet
+                    ext_hash = self._compute_ext_hash(
+                        anchor_contract, service_addr, 'evm',
+                    )
+
+                    proof_data = mixer._generate_proof(
+                        root=root,
+                        secret=secret,
+                        ext_hash=ext_hash,
+                        address_bits=address_bits,
+                        path=path,
+                        leaf_index=leaf_index,
+                    )
+
+                    if proof_data is None:
+                        raise RuntimeError("zkSNARK proof generation failed")
+
+                    # Submit anchor withdrawal (1 wei → service wallet, proves nullifier)
+                    anchor_result = wallet.withdraw_via_relayer(
+                        chain='ethereum',
+                        rpc_url=anchor_rpc_url,
+                        contract_address=anchor_contract,
+                        root=proof_data.root,
+                        nullifier=proof_data.nullifier,
+                        proof_points=list(proof_data.proof_points),
+                        recipient=service_addr,
+                        relayer_fee=0,
+                        is_native=True,
+                        payout_amount=1,  # 1 wei
+                        network_mode=order.network_mode,
+                    )
+
+                    if not anchor_result.get('success'):
+                        raise RuntimeError(anchor_result.get('error', 'anchor withdraw failed'))
+
+                    # Record anchor proof
+                    anchor_unit.status = 'withdrawn'
+                    anchor_unit.nullifier = str(proof_data.nullifier)
+                    anchor_unit.withdraw_tx_hash = anchor_result['tx_hash']
+                    anchor_unit.withdrawn_at = datetime.utcnow()
+                    order.nullifier = str(proof_data.nullifier)
+                    anchor_data = {
+                        'anchor_contract': anchor_contract,
+                        'anchor_tx': anchor_result['tx_hash'],
+                        'nullifier': str(proof_data.nullifier),
+                        'leaf_index': leaf_index,
+                    }
+                    db.session.flush()
+                    logger.info(
+                        f"Order {order.id}: BTC anchor proof on Ethereum — "
+                        f"nullifier={proof_data.nullifier}, tx={anchor_result['tx_hash']}"
+                    )
+
+                except Exception as anchor_err:
+                    logger.warning(
+                        f"Order {order.id}: BTC anchor proof failed (non-fatal) — {anchor_err}"
+                    )
+                    # Release the anchor unit back to available
+                    if anchor_unit.status == 'reserved':
+                        anchor_unit.status = 'available'
+                        anchor_unit.reserved_for_order = None
+                        anchor_unit.reserved_at = None
+                    anchor_data = {}
+
+            # ----------------------------------------------------------------
+            # Step 2: Send BTC payout to recipient
+            # ----------------------------------------------------------------
             order.status = 'withdrawing'
             db.session.commit()
 
@@ -342,11 +507,39 @@ class OrderProcessor:
             order.completed_units = order.units
             order.status = 'completed'
             order.withdrawn_at = datetime.utcnow()
+
+            # Store anchor proof data in unit_data for privacy analysis
+            if anchor_data:
+                order.unit_data = json.dumps({'btc_anchor': anchor_data})
+
+            order.deposited_at = order.payment_confirmed_at  # time reference for analysis
             db.session.commit()
             logger.info(
                 f"Order {order.id}: BTC withdrawal completed ({order.units} units) "
                 f"— tx={order.withdraw_tx_hash}"
             )
+
+            # ----------------------------------------------------------------
+            # Step 3: Forward fee to external BTC wallet (best-effort)
+            # ----------------------------------------------------------------
+            fee_wallet = self._fee_wallets.get(order.network_mode, {}).get('utxo', '')
+            btc_fee = int(order.commission_amount)
+            if btc_fee > 0 and fee_wallet:
+                fee_result = wallet.forward_fee(
+                    chain=order.chain, rpc_url='',
+                    fee_wallet=fee_wallet, amount=btc_fee,
+                    network_mode=order.network_mode,
+                )
+                if fee_result.get('success'):
+                    logger.info(
+                        f"Order {order.id}: BTC fee {btc_fee} forwarded to "
+                        f"{fee_wallet} (tx={fee_result['tx_hash']})"
+                    )
+                else:
+                    logger.warning(
+                        f"Order {order.id}: BTC fee forwarding failed — "
+                        f"{fee_result.get('error')}"
+                    )
 
         except Exception as e:
             logger.error(f"Order {order.id}: BTC withdrawal error — {e}", exc_info=True)
@@ -393,6 +586,7 @@ class OrderProcessor:
                         f'No reserved pool unit for withdrawal '
                         f'(unit {unit_idx + 1}/{order.units})'
                     )
+                    self._release_reserved_units(order)
                     db.session.commit()
                     logger.error(f"Order {order.id}: {order.error_message}")
                     continue
@@ -416,6 +610,7 @@ class OrderProcessor:
                 if not asset:
                     order.status = 'failed'
                     order.error_message = f"Asset {order.symbol} on {order.chain} not found"
+                    self._release_reserved_units(order)
                     db.session.commit()
                     continue
 
@@ -450,6 +645,7 @@ class OrderProcessor:
                         f'zkSNARK proof generation failed '
                         f'(unit {unit_idx + 1}, PoolUnit #{reserved_unit.id})'
                     )
+                    self._release_reserved_units(order)
                     db.session.commit()
                     continue
 
@@ -468,7 +664,7 @@ class OrderProcessor:
                     contract_address=order.mixer_contract,
                     root=proof_data.root,
                     nullifier=proof_data.nullifier,
-                    proof_points=list(proof_data.proof),
+                    proof_points=list(proof_data.proof_points),
                     recipient=order.recipient_address,
                     relayer_fee=relayer_fee,
                     is_native=is_native,
@@ -479,6 +675,7 @@ class OrderProcessor:
                 if not withdraw_result.get('success'):
                     order.status = 'failed'
                     order.error_message = withdraw_result.get('error', 'Withdrawal failed')
+                    self._release_reserved_units(order)
                     db.session.commit()
                     logger.error(f"Order {order.id}: withdrawal failed — {order.error_message}")
                     continue
@@ -505,6 +702,30 @@ class OrderProcessor:
                     f"(PoolUnit #{reserved_unit.id} -> {order.recipient_address[:10]}...)"
                 )
 
+                # Forward fee to external wallet (best-effort)
+                chain_type = get_chain_type(order.chain)
+                fee_wallet = self._fee_wallets.get(order.network_mode, {}).get(chain_type, '')
+                if relayer_fee > 0 and fee_wallet:
+                    token_address = self._get_token_address(
+                        order.symbol, order.chain, order.network_mode,
+                    )
+                    fee_result = wallet.forward_fee(
+                        chain=order.chain, rpc_url=rpc_url,
+                        fee_wallet=fee_wallet, amount=relayer_fee,
+                        is_native=is_native, token_address=token_address,
+                        network_mode=order.network_mode,
+                    )
+                    if fee_result.get('success'):
+                        logger.info(
+                            f"Order {order.id}: fee {relayer_fee} forwarded to "
+                            f"{fee_wallet} (tx={fee_result['tx_hash']})"
+                        )
+                    else:
+                        logger.warning(
+                            f"Order {order.id}: fee forwarding failed — "
+                            f"{fee_result.get('error')}"
+                        )
+
                 if order.completed_units >= order.units:
                     order.status = 'completed'
                     order.withdrawn_at = datetime.utcnow()
@@ -522,6 +743,7 @@ class OrderProcessor:
                 logger.error(f"Order {order.id}: prove/withdraw error — {e}", exc_info=True)
                 order.status = 'failed'
                 order.error_message = f"Prove/withdraw error: {str(e)}"
+                self._release_reserved_units(order)
                 db.session.commit()
 
     @staticmethod
@@ -531,10 +753,17 @@ class OrderProcessor:
         if chain_type == 'tvm':
             try:
                 from tronpy.keys import to_hex_address
+                # to_hex_address returns 21-byte "41..." hex — strip the Tron
+                # network-byte prefix to get the 20-byte address that Solidity
+                # uses in abi.encodePacked(address(this), msg.sender).
                 contract_hex = to_hex_address(mixer_contract)
                 recipient_hex = to_hex_address(recipient_address)
-                contract_bytes = bytes.fromhex(contract_hex)
-                recipient_bytes = bytes.fromhex(recipient_hex)
+                if contract_hex.startswith("41") and len(contract_hex) == 42:
+                    contract_hex = contract_hex[2:]
+                if recipient_hex.startswith("41") and len(recipient_hex) == 42:
+                    recipient_hex = recipient_hex[2:]
+                contract_bytes = bytes.fromhex(contract_hex)    # 20 bytes
+                recipient_bytes = bytes.fromhex(recipient_hex)  # 20 bytes
             except ImportError:
                 contract_bytes = bytes.fromhex(mixer_contract[2:].lower())
                 recipient_bytes = bytes.fromhex(recipient_address[2:].lower())
@@ -550,6 +779,28 @@ class OrderProcessor:
             % SCALAR_FIELD
         )
         return ext_hash
+
+    # ------------------------------------------------------------------
+    # Helper: release reserved units for a failed/expired order
+    # ------------------------------------------------------------------
+
+    def _release_reserved_units(self, order: MixOrder):
+        """Release any reserved PoolUnits back to 'available' for a given order."""
+        reserved_units = PoolUnit.query.filter_by(
+            reserved_for_order=order.id,
+            status='reserved',
+        ).all()
+
+        for pu in reserved_units:
+            pu.status = 'available'
+            pu.reserved_for_order = None
+            pu.reserved_at = None
+
+        if reserved_units:
+            logger.info(
+                f"Order {order.id}: released {len(reserved_units)} reserved unit(s) "
+                f"back to pool"
+            )
 
     # ------------------------------------------------------------------
     # 4. Expire stale orders + release reserved units
@@ -568,23 +819,7 @@ class OrderProcessor:
 
         for order in stale_orders:
             order.status = 'expired'
-
-            # Release reserved pool units back to available
-            reserved_units = PoolUnit.query.filter_by(
-                reserved_for_order=order.id,
-                status='reserved',
-            ).all()
-
-            for pu in reserved_units:
-                pu.status = 'available'
-                pu.reserved_for_order = None
-                pu.reserved_at = None
-
-            if reserved_units:
-                logger.info(
-                    f"Order {order.id}: released {len(reserved_units)} reserved unit(s) "
-                    f"back to pool"
-                )
+            self._release_reserved_units(order)
 
             logger.info(f"Order {order.id}: expired (pending since {order.created_at})")
 

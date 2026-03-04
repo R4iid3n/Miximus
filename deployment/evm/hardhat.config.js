@@ -29,10 +29,11 @@ module.exports = {
   },
 
   paths: {
-    sources: "../../contracts/evm",
-    tests: "./test",
-    cache: "./cache",
-    artifacts: "./artifacts",
+    root: "../..",
+    sources: "contracts/evm",
+    tests: "deployment/evm/test",
+    cache: "deployment/evm/cache",
+    artifacts: "deployment/evm/artifacts",
   },
 
   networks: {
@@ -56,7 +57,7 @@ module.exports = {
       url: process.env.POLYGON_RPC || "https://polygon-rpc.com",
       chainId: 137,
       accounts: [DEPLOYER_KEY],
-      gasPrice: 50000000000, // 50 gwei
+      gasPrice: "auto",
     },
 
     avalanche: {
@@ -147,15 +148,8 @@ module.exports = {
     },
   },
 
-  // Etherscan-compatible verification for all chains
+  // Etherscan V2 API — single key covers all chains
   etherscan: {
-    apiKey: {
-      mainnet: process.env.ETHERSCAN_KEY || "",
-      bsc: process.env.BSCSCAN_KEY || "",
-      polygon: process.env.POLYGONSCAN_KEY || "",
-      avalanche: process.env.SNOWTRACE_KEY || "",
-      arbitrumOne: process.env.ARBISCAN_KEY || "",
-      optimisticEthereum: process.env.OPTIMISM_ETHERSCAN_KEY || "",
-    },
+    apiKey: process.env.ETHERSCAN_KEY || "",
   },
 };

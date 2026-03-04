@@ -8,8 +8,8 @@ interface Props {
 }
 
 export default function PoolSelector({ pools, selected, onSelect, loading }: Props) {
-  if (loading) return <div style={{ color: '#888', textAlign: 'center', padding: 40 }}>Loading pools...</div>
-  if (!pools.length) return <div style={{ color: '#888', textAlign: 'center', padding: 40 }}>No pools available</div>
+  if (loading) return <div style={{ color: '#888', textAlign: 'center', padding: 40 }}>Загрузка пулов...</div>
+  if (!pools.length) return <div style={{ color: '#888', textAlign: 'center', padding: 40 }}>Нет доступных пулов</div>
 
   return (
     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 12 }}>
@@ -24,17 +24,17 @@ export default function PoolSelector({ pools, selected, onSelect, loading }: Pro
           }}>
             <div style={{ color: '#fff', fontSize: 18, fontWeight: 700, marginBottom: 4 }}>{pool.symbol}</div>
             <div style={{ color: '#888', fontSize: 12, marginBottom: 8 }}>{pool.chain}</div>
-            <div style={{ color: '#00d2ff', fontSize: 14, fontWeight: 600 }}>Unit: {pool.denomination_display}</div>
+            <div style={{ color: '#00d2ff', fontSize: 14, fontWeight: 600 }}>Единица: {pool.denomination_display}</div>
             <div style={{ color: '#4caf50', fontSize: 12, marginTop: 4 }}>
-              Fee: {(pool.commission_rate * 100).toFixed(1)}% | Per unit: {pool.payout_display}
+              Комиссия: {(pool.commission_rate * 100).toFixed(1)}% | За единицу: {pool.payout_display}
             </div>
             <div style={{
-              color: pool.mixer_contract === 'custodial' ? '#888' : pool.available_units > 0 ? '#8bc34a' : '#f44336',
+              color: pool.available_units > 0 ? '#8bc34a' : '#f44336',
               fontSize: 11, marginTop: 6, fontWeight: 600,
             }}>
               {pool.mixer_contract === 'custodial'
-                ? 'Custodial'
-                : `In pool: ${pool.available_units} units`}
+                ? `Кастодиальный · ${pool.available_units} ед.`
+                : `В пуле: ${pool.available_units} ед.`}
             </div>
           </button>
         )

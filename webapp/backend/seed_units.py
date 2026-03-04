@@ -33,6 +33,10 @@ import logging
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 sys.path.insert(0, os.path.join(PROJECT_ROOT, 'python'))
 
+# Load .env from project root
+from dotenv import load_dotenv
+load_dotenv(os.path.join(PROJECT_ROOT, '.env'))
+
 from app import create_app
 from models import db, PoolConfig, PoolUnit
 from mixer_service import get_mixer

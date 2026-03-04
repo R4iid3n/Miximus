@@ -81,6 +81,7 @@ class AssetRegistry:
                     decimals=asset_data['decimals'],
                     denomination=int(asset_data['denomination']),
                     contract_address=asset_data.get('contract'),
+                    mixer_contract=asset_data.get('mixer_contract'),
                     rpc_url=chain_config.get('rpc_url'),
                 )
 
@@ -160,10 +161,16 @@ def get_adapter_for_asset(asset: AssetConfig, **kwargs):
         )
 
     elif asset.chain_type == ChainType.TVM:
-        # Tron adapter (uses tronpy)
-        raise NotImplementedError(
-            f"Tron adapter for {asset.symbol}: deploy MiximusNativeTron.sol "
-            f"or MiximusTRC20.sol via TronBox"
+        # Tron adapter — read-only wrapper for Merkle tree queries (get_root / get_path).
+        # Actual signing is handled by MultiChainWallet → TronAdapter in wallet_service.py.
+        from .tron import TronChainAdapter
+        return TronChainAdapter(
+            rpc_url=asset.rpc_url or "https://nile.trongrid.io",
+            contract_address=asset.mixer_contract or "",
+            symbol=asset.symbol,
+            denomination=asset.denomination,
+            is_token=asset.asset_type == "trc20",
+            token_address=asset.contract_address if asset.asset_type == "trc20" else None,
         )
 
     elif asset.chain_type == ChainType.SVM:

@@ -34,6 +34,11 @@ from typing import Optional, Dict, List, Tuple
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 
+# ethsnarks Python package (for MiMC hash, verifier, etc.)
+_ethsnarks_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'ethsnarks-miximus', 'ethsnarks')
+if _ethsnarks_path not in sys.path:
+    sys.path.insert(0, _ethsnarks_path)
+
 from chain_adapters.base import (
     ChainAdapter, ChainType, DepositResult, BatchDepositResult,
     WithdrawResult, BatchWithdrawResult, ProofData
@@ -129,27 +134,23 @@ class MiximusMultiChain:
 
     def compute_leaf_hash(self, secret: int) -> int:
         """
-        Compute the leaf hash from a secret: leaf_hash = MiMC(secret)
-        Uses the native C++ library (same as the zkSNARK circuit).
+        Compute the leaf hash from a secret: leaf_hash = MiMC_hash([secret])
+        Uses ethsnarks MiMC with Keccak-256 round constants (matches circuit).
         """
-        prover = self._get_prover()
-        if prover:
-            # Use native library
-            return prover.make_leaf_hash(secret)
-        else:
-            # Fallback: Python MiMC (for testing only)
-            return self._python_mimc([secret])
+        from ethsnarks.mimc import mimc_hash
+        return mimc_hash([secret])
 
     def compute_nullifier(self, secret: int, leaf_index: int) -> int:
         """
         Compute the nullifier for a deposit.
-        nullifier = MiMC(leaf_index, secret)
+        nullifier = MiMC_hash([leaf_index, secret])
         """
         prover = self._get_prover()
         if prover:
             return prover.nullifier(secret, leaf_index)
         else:
-            return self._python_mimc([leaf_index, secret])
+            from ethsnarks.mimc import mimc_hash
+            return mimc_hash([leaf_index, secret])
 
     def deposit(self, symbol: str, chain: str, secret: int,
                 private_key: str) -> DepositResult:
@@ -391,10 +392,12 @@ class MiximusMultiChain:
         if self._prover is None and self.native_lib_path:
             try:
                 # Import the original miximus Python wrapper
-                miximus_path = os.path.join(
-                    os.path.dirname(__file__), '..', 'ethsnarks-miximus', 'python'
-                )
+                base = os.path.join(os.path.dirname(__file__), '..', 'ethsnarks-miximus')
+                miximus_path = os.path.join(base, 'python')
+                ethsnarks_path = os.path.join(base, 'ethsnarks')  # parent of ethsnarks pkg
                 sys.path.insert(0, miximus_path)
+                if ethsnarks_path not in sys.path:
+                    sys.path.insert(0, ethsnarks_path)
                 from miximus import Miximus
                 self._prover = Miximus(
                     self.native_lib_path,
@@ -402,7 +405,9 @@ class MiximusMultiChain:
                     self.pk_file,
                 )
             except Exception as e:
-                print(f"Warning: Could not load native prover: {e}")
+                import traceback
+                print(f"ERROR: Could not load native prover: {e}", flush=True)
+                traceback.print_exc()
                 self._prover = None
         return self._prover
 
@@ -412,57 +417,63 @@ class MiximusMultiChain:
         """Generate a zkSNARK proof using the native C++ library"""
         prover = self._get_prover()
         if prover is None:
+            print("ERROR: Prover not available — proof generation skipped", flush=True)
             return None
 
         try:
+            # Convert bool list from Solidity to int list for the C++ prover
+            address_bits_int = [int(b) for b in address_bits]
+            print(f"DEBUG address_bits type={type(address_bits)}, len={len(address_bits)}, first5={address_bits[:5]}", flush=True)
+            print(f"DEBUG address_bits_int len={len(address_bits_int)}, first5={address_bits_int[:5]}", flush=True)
+            print(f"DEBUG path len={len(path)}", flush=True)
+            print(f"Generating proof: root={hex(root)[:16]}..., leaf_index={leaf_index}", flush=True)
             proof = prover.prove(
                 root=root,
                 spend_preimage=secret,
                 exthash=ext_hash,
-                address_bits=address_bits,
+                address_bits=address_bits_int,
                 path=path,
             )
 
             nullifier = self.compute_nullifier(secret, leaf_index)
 
+            # Extract 8 proof points from the Proof object's JSON
+            # ethsnarks format: A=[x,y], B=[[X.c1,X.c0],[Y.c1,Y.c0]], C=[x,y]
+            # Pass G2 coordinates directly — do NOT swap (matches EVM precompile)
+            proof_dict = json.loads(proof.to_json())
+            proof_points = [
+                int(proof_dict['A'][0], 16),
+                int(proof_dict['A'][1], 16),
+                int(proof_dict['B'][0][0], 16),
+                int(proof_dict['B'][0][1], 16),
+                int(proof_dict['B'][1][0], 16),
+                int(proof_dict['B'][1][1], 16),
+                int(proof_dict['C'][0], 16),
+                int(proof_dict['C'][1], 16),
+            ]
+
+            print(f"Proof generated successfully!", flush=True)
             return ProofData(
                 root=root,
                 nullifier=nullifier,
                 proof_json=proof.to_json(),
-                proof_points=proof.to_flat_list(),  # [A.x, A.y, B.x1, ...]
+                proof_points=proof_points,
                 external_hash=ext_hash,
             )
         except Exception as e:
-            print(f"Proof generation failed: {e}")
+            import traceback
+            print(f"ERROR: Proof generation failed: {e}", flush=True)
+            traceback.print_exc()
             return None
 
     @staticmethod
     def _python_mimc(data: List[int]) -> int:
         """
-        Pure Python MiMC hash (for testing/fallback only).
-        In production, always use the native C++ library.
+        Pure Python MiMC hash using ethsnarks (Keccak-256 round constants).
+        Matches the C++ circuit exactly.
         """
-        SCALAR_FIELD = 21888242871839275222246405745257275088548364400416034343698204186575808495617
-        r = 0
-        c = 0
-
-        for x in data:
-            h = (x + r + c) % SCALAR_FIELD
-            for round_num in range(91):
-                # Round constant
-                import hashlib
-                ci_bytes = hashlib.sha256(
-                    f"mimcsponge{round_num}".encode()
-                ).digest()
-                ci = int.from_bytes(ci_bytes, 'big') % SCALAR_FIELD
-                t = (h + ci) % SCALAR_FIELD
-                # t^7
-                t2 = (t * t) % SCALAR_FIELD
-                t4 = (t2 * t2) % SCALAR_FIELD
-                h = (t * t2 % SCALAR_FIELD * t4) % SCALAR_FIELD
-            r = (r + h + x) % SCALAR_FIELD
-
-        return r
+        from ethsnarks.mimc import mimc_hash
+        return mimc_hash(data)
 
 
 # =========================================================================

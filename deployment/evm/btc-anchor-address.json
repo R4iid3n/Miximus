@@ -1,0 +1,7 @@
+{
+  "network": "sepolia",
+  "btc_anchor_contract": "0xBF36B99a836d7b08FaDAc880a35046C154Ceb993",
+  "denomination": "1",
+  "deployer": "0x6B4A4F918359fBE0288Ec707d411722E21FfA0b1",
+  "deployed_at": "2026-02-28T16:46:38.896Z"
+}

@@ -259,6 +259,29 @@ def create_order():
 
     is_custodial = (pool.mixer_contract == 'custodial' or chain == 'bitcoin')
 
+    # For custodial BTC orders: verify the service wallet has enough balance
+    # to cover the payout before accepting the order.
+    if chain == 'bitcoin':
+        try:
+            from wallet_service import WalletService
+            _svc_key = current_app.config.get('SERVICE_WALLET_PRIVATE_KEY', '')
+            if _svc_key:
+                _ws = WalletService(_svc_key)
+                _btc_adapter = _ws._get_btc_adapter(network_mode)
+                _wallet_balance_sat = _btc_adapter.get_balance()
+                if _wallet_balance_sat < total_payout:
+                    _wallet_btc = _wallet_balance_sat / 1e8
+                    _needed_btc = total_payout / 1e8
+                    return jsonify({
+                        'error': (
+                            f'Недостаточно средств в пуле BTC. '
+                            f'Доступно: {_wallet_btc:.8f} BTC, '
+                            f'требуется: {_needed_btc:.8f} BTC.'
+                        ),
+                    }), 409
+        except Exception as _e:
+            logger.warning("BTC balance check failed (non-fatal): %s", _e)
+
     if not is_custodial:
         available = PoolUnit.query.filter_by(
             symbol=symbol,
@@ -272,6 +295,27 @@ def create_order():
                 'error': (
                     f'Недостаточно ликвидности в пуле. '
                     f'Доступно: {len(available)}, запрошено: {units}'
+                ),
+            }), 409
+
+    # For BTC orders: require enough BTC_ANCHOR units for the zkSNARK proof.
+    # Without them the order would complete without any privacy guarantee.
+    if chain == 'bitcoin':
+        _anchor_chain = 'polygon' if network_mode == 'mainnet' else 'ethereum'
+        _anchor_available = PoolUnit.query.filter_by(
+            symbol='BTC_ANCHOR',
+            chain=_anchor_chain,
+            network_mode=network_mode,
+            status='available',
+        ).count()
+        if _anchor_available < units:
+            _anchor_net = 'Polygon' if network_mode == 'mainnet' else 'Sepolia'
+            return jsonify({
+                'error': (
+                    f'Недостаточно zkSNARK-юнитов анкера приватности BTC '
+                    f'({_anchor_net}). '
+                    f'Доступно: {_anchor_available}, запрошено: {units}. '
+                    f'Обратитесь к оператору.'
                 ),
             }), 409
 
@@ -312,12 +356,12 @@ def create_order():
             pu.reserved_for_order = order.id
             pu.reserved_at = now
 
-    # For BTC orders: also reserve BTC_ANCHOR units (one per BTC unit) so the
-    # order processor can generate zkSNARK proofs on Ethereum for privacy.
+    # For BTC orders: reserve BTC_ANCHOR units (one per BTC unit) for zkSNARK proofs.
+    # _anchor_chain is already set above in the availability check.
     if chain == 'bitcoin':
         anchor_units = PoolUnit.query.filter_by(
             symbol='BTC_ANCHOR',
-            chain='ethereum',
+            chain=_anchor_chain,
             network_mode=network_mode,
             status='available',
         ).limit(units).all()
@@ -483,12 +527,13 @@ def order_analysis(order_id: str):
     # ---- Check 2: Anonymity Set ----
     # For BTC orders, count the BTC_ANCHOR pool (Ethereum zkSNARK pool) as the anonymity set
     if order.chain == 'bitcoin':
+        _anchor_chain = 'polygon' if order.network_mode == 'mainnet' else 'ethereum'
         total_deposits = PoolUnit.query.filter_by(
             symbol='BTC_ANCHOR',
-            chain='ethereum',
+            chain=_anchor_chain,
             network_mode=order.network_mode,
         ).count()
-        pool_desc = f"BTC anchor pool (Ethereum zkSNARK)"
+        pool_desc = f"BTC anchor pool ({'Polygon' if order.network_mode == 'mainnet' else 'Ethereum'} zkSNARK)"
     else:
         total_deposits = PoolUnit.query.filter_by(
             symbol=order.symbol,

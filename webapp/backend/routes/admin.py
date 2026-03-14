@@ -359,6 +359,8 @@ def admin_seed():
     ).first()
     if not pool:
         return jsonify({'error': 'Pool not found'}), 404
+    if not pool.enabled:
+        return jsonify({'error': 'Cannot seed a disabled pool'}), 400
     if pool.mixer_contract == 'custodial':
         return jsonify({'error': 'Cannot seed a custodial pool on-chain'}), 400
 

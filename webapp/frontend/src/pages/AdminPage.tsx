@@ -328,10 +328,31 @@ function SeedWidget({ token, pool }: { token: string; pool: AdminPool }) {
   const pct = job && job.total > 0 ? Math.round(((job.done + job.failed) / job.total) * 100) : 0
   const isDone = job && !job.running && job.done + job.failed >= job.total
 
+  const isAnchor = pool.symbol === 'BTC_ANCHOR'
+  const denomWei = BigInt(pool.denomination)
+  const totalWei = denomWei * BigInt(units)
+  const totalEth = Number(totalWei) / 1e18
+
   return (
     <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid #1a1a2e' }}>
       {!jobId ? (
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+        <>
+          <div style={{ fontSize: 11, color: '#888', marginBottom: 10, lineHeight: 1.5 }}>
+            {isAnchor ? (
+              <>
+                <strong style={{ color: '#a29bfe' }}>zkSNARK-слот</strong> = один депозит 1 wei в контракт Miximus на {pool.chain === 'polygon' ? 'Polygon' : 'Sepolia'}.<br />
+                Каждый слот расходуется при обработке одного BTC-заказа для генерации анонимного доказательства.<br />
+                Стоимость: только газ (~0.001–0.003 ETH/MATIC за слот).
+              </>
+            ) : (
+              <>
+                <strong style={{ color: '#fdcb6e' }}>Юнит</strong> = депозит <code style={{ background: '#1a1a2e', padding: '1px 4px', borderRadius: 3 }}>{pool.denomination} wei</code> в контракт миксера.<br />
+                Пользователи будут выводить из этих юнитов — их депозиты пойдут в пул, а не обратно к ним.<br />
+                {units > 0 && <span>Итого спишется с сервисного кошелька: <strong style={{ color: '#fff' }}>{totalEth.toFixed(6)} {pool.chain === 'tron' ? 'TRX' : 'ETH'}</strong> + газ.</span>}
+              </>
+            )}
+          </div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <input
             type="number" min={1} max={50} value={units}
             onChange={e => setUnits(parseInt(e.target.value) || 1)}
@@ -341,6 +362,7 @@ function SeedWidget({ token, pool }: { token: string; pool: AdminPool }) {
           <button style={btn('primary')} onClick={startSeed}>Пополнить</button>
           {error && <span style={{ color: '#f44336', fontSize: 12 }}>{error}</span>}
         </div>
+        </>
       ) : (
         <div>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4, fontSize: 12, color: '#888' }}>
@@ -450,6 +472,9 @@ function PoolsTab({ token }: { token: string }) {
   const [seedingPool, setSeedingPool] = useState<number | null>(null)
   const [initStatus, setInitStatus] = useState<string>('')
   const [initLoading, setInitLoading] = useState(false)
+  const [bulkUnits, setBulkUnits] = useState(5)
+  const [bulkStatus, setBulkStatus] = useState<{ done: number; failed: number; total: number } | null>(null)
+  const [bulkLoading, setBulkLoading] = useState(false)
 
   const loadPools = useCallback(() => {
     adminGetPools(token).then(r => setPools(r.pools)).catch(() => {})
@@ -471,6 +496,28 @@ function PoolsTab({ token }: { token: string }) {
     }
   }
 
+  async function handleSeedAll() {
+    const targets = pools.filter(p => p.mixer_contract !== 'custodial' && p.symbol !== 'BTC_ANCHOR' && p.enabled)
+    if (targets.length === 0) return
+    setBulkLoading(true)
+    setBulkStatus({ done: 0, failed: 0, total: targets.length })
+    let done = 0, failed = 0
+    for (const pool of targets) {
+      try {
+        await adminSeedPool(token, {
+          symbol: pool.symbol, chain: pool.chain,
+          network_mode: pool.network_mode, units: bulkUnits,
+        })
+        done++
+      } catch {
+        failed++
+      }
+      setBulkStatus({ done, failed, total: targets.length })
+    }
+    setBulkLoading(false)
+    loadPools()
+  }
+
   return (
     <div>
       {/* ── Инициализация пулов ── */}
@@ -490,6 +537,54 @@ function PoolsTab({ token }: { token: string }) {
         <button style={btn('primary')} onClick={handleInitPools} disabled={initLoading}>
           {initLoading ? 'Загрузка…' : '⚙ Инициализировать пулы'}
         </button>
+      </div>
+
+      {/* ── Массовое пополнение ── */}
+      <div style={{ ...card, display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 4 }}>Пополнить пулы EVM/Tron</div>
+          <div style={{ fontSize: 12, color: '#888' }}>
+            Депозит реальных средств в контракты миксера (ETH, USDC, USDT).
+            BTC_ANCHOR и кастодиальные пулы пропускаются — пополняйте их отдельно.
+          </div>
+          {bulkStatus && (
+            <div style={{ marginTop: 8 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: '#888', marginBottom: 4 }}>
+                <span>
+                  {bulkLoading
+                    ? `Пополнение… ${bulkStatus.done + bulkStatus.failed}/${bulkStatus.total}`
+                    : bulkStatus.failed > 0
+                      ? `Завершено: ${bulkStatus.done} OK, ${bulkStatus.failed} ошибок`
+                      : `Все ${bulkStatus.done} пулов запущены`}
+                </span>
+                <span>{Math.round(((bulkStatus.done + bulkStatus.failed) / bulkStatus.total) * 100)}%</span>
+              </div>
+              <div style={{ background: '#1a1a2e', borderRadius: 4, height: 6 }}>
+                <div style={{
+                  height: '100%', borderRadius: 4,
+                  background: !bulkLoading && bulkStatus.failed > 0 ? '#f44336' : '#6c5ce7',
+                  width: `${Math.round(((bulkStatus.done + bulkStatus.failed) / bulkStatus.total) * 100)}%`,
+                  transition: 'width 0.3s',
+                }} />
+              </div>
+            </div>
+          )}
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <input
+            type="number" min={1} max={50} value={bulkUnits}
+            onChange={e => setBulkUnits(Math.max(1, parseInt(e.target.value) || 1))}
+            style={{ ...input, width: 70, textAlign: 'center' }}
+          />
+          <span style={{ color: '#888', fontSize: 12, whiteSpace: 'nowrap' }}>юн./пул</span>
+          <button
+            style={btn('primary')}
+            onClick={handleSeedAll}
+            disabled={bulkLoading || pools.filter(p => p.mixer_contract !== 'custodial' && p.symbol !== 'BTC_ANCHOR' && p.enabled).length === 0}
+          >
+            {bulkLoading ? 'Пополнение…' : '⬆ Пополнить EVM/Tron'}
+          </button>
+        </div>
       </div>
 
       {/* ── Карточки пулов ── */}
@@ -523,11 +618,24 @@ function PoolsTab({ token }: { token: string }) {
               Номинал: {pool.denomination} wei &nbsp;·&nbsp; Комиссия: {(pool.commission_rate * 100).toFixed(1)}%
             </div>
 
-            <div style={{ display: 'flex', gap: 16, fontSize: 13 }}>
-              <span style={{ color: '#4caf50' }}>✓ {pool.available} доступно</span>
-              <span style={{ color: '#ffc107' }}>⏳ {pool.reserved} зарезерв.</span>
-              <span style={{ color: '#666' }}>✗ {pool.withdrawn} выведено</span>
-            </div>
+            {pool.mixer_contract === 'custodial' ? (
+              <div style={{ fontSize: 12, color: '#777', fontStyle: 'italic' }}>
+                Кастодиальный — ёмкость = баланс кошелька
+              </div>
+            ) : (
+              <>
+                <div style={{ display: 'flex', gap: 16, fontSize: 13 }}>
+                  <span style={{ color: '#4caf50' }}>✓ {pool.available} доступно</span>
+                  <span style={{ color: '#ffc107' }}>⏳ {pool.reserved} зарезерв.</span>
+                  <span style={{ color: '#666' }}>✗ {pool.withdrawn} выведено</span>
+                </div>
+                <div style={{ fontSize: 11, color: '#666', marginTop: 4 }}>
+                  {pool.symbol === 'BTC_ANCHOR'
+                    ? '🔐 zkSNARK-слоты для анонимности BTC-ордеров'
+                    : `💰 Каждый юнит = депозит ${pool.denomination} wei в контракт миксера`}
+                </div>
+              </>
+            )}
 
             {/* Address editor — shown for all pool types */}
             <AddressEditor
@@ -539,21 +647,21 @@ function PoolsTab({ token }: { token: string }) {
               ))}
             />
 
-            {pool.mixer_contract === 'custodial' ? (
-              <div style={{ marginTop: 8, fontSize: 11, color: '#555', fontStyle: 'italic' }}>
-                Кастодиальный пул — юниты создаются автоматически при получении оплаты.
-              </div>
-            ) : (
+            {pool.mixer_contract !== 'custodial' && pool.enabled ? (
               <>
                 <button
                   style={{ ...btn('ghost'), marginTop: 10, fontSize: 12 }}
                   onClick={() => setSeedingPool(seedingPool === pool.id ? null : pool.id)}
                 >
-                  {seedingPool === pool.id ? 'Отмена' : '+ Пополнить юниты'}
+                  {seedingPool === pool.id
+                    ? 'Отмена'
+                    : pool.symbol === 'BTC_ANCHOR'
+                      ? '+ Добавить zkSNARK-слоты'
+                      : '+ Пополнить пул (депозит в контракт)'}
                 </button>
                 {seedingPool === pool.id && <SeedWidget token={token} pool={pool} />}
               </>
-            )}
+            ) : null}
           </div>
         ))}
       </div>

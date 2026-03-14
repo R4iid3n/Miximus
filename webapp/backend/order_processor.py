@@ -28,6 +28,11 @@ from datetime import datetime
 
 from models import db, MixOrder, PoolConfig, PoolUnit
 from mixer_service import get_mixer
+
+
+def _btc_anchor_chain(network_mode: str) -> str:
+    """Return the EVM chain that hosts the BTC_ANCHOR contract for a given network mode."""
+    return 'polygon' if network_mode == 'mainnet' else 'ethereum'
 from wallet_service import MultiChainWallet, get_chain_type
 
 logger = logging.getLogger(__name__)
@@ -65,6 +70,8 @@ class OrderProcessor:
                 'utxo': app.config.get('FEE_WALLET_BTC_TESTNET',  ''),
             },
         }
+        # Accumulated BTC fees that are below dust threshold — flushed when total >= BTC_DUST_LIMIT
+        self._pending_btc_fees: dict = {'mainnet': 0, 'testnet': 0}
 
     def _get_wallet(self) -> MultiChainWallet:
         """Lazily initialize the MultiChainWallet from app config."""
@@ -377,9 +384,10 @@ class OrderProcessor:
             # Step 1: zkSNARK anchor proof on Ethereum (best-effort)
             # ----------------------------------------------------------------
             anchor_data = {}
+            anchor_chain = _btc_anchor_chain(order.network_mode)
             anchor_unit = PoolUnit.query.filter_by(
                 symbol='BTC_ANCHOR',
-                chain='ethereum',
+                chain=anchor_chain,
                 reserved_for_order=order.id,
                 status='reserved',
             ).order_by(PoolUnit.id).first()
@@ -394,13 +402,13 @@ class OrderProcessor:
 
                 try:
                     anchor_contract = anchor_unit.mixer_contract
-                    anchor_rpc_url = self._get_rpc_url('ethereum', order.network_mode)
+                    anchor_rpc_url = self._get_rpc_url(anchor_chain, order.network_mode)
                     mixer = get_mixer(order.network_mode)
                     wallet = self._get_wallet()
                     service_addr = wallet.get_evm_address()
 
                     # Get anchor asset for the adapter
-                    anchor_asset = mixer.registry.get_asset('BTC_ANCHOR', 'ethereum')
+                    anchor_asset = mixer.registry.get_asset('BTC_ANCHOR', anchor_chain)
                     if not anchor_asset:
                         raise RuntimeError("BTC_ANCHOR asset not found in registry")
 
@@ -521,25 +529,37 @@ class OrderProcessor:
 
             # ----------------------------------------------------------------
             # Step 3: Forward fee to external BTC wallet (best-effort)
+            # Fees below the dust limit are accumulated and flushed together
+            # once the total reaches the threshold.
             # ----------------------------------------------------------------
+            BTC_DUST_LIMIT = 546  # satoshis
             fee_wallet = self._fee_wallets.get(order.network_mode, {}).get('utxo', '')
             btc_fee = int(order.commission_amount)
             if btc_fee > 0 and fee_wallet:
-                fee_result = wallet.forward_fee(
-                    chain=order.chain, rpc_url='',
-                    fee_wallet=fee_wallet, amount=btc_fee,
-                    network_mode=order.network_mode,
+                self._pending_btc_fees[order.network_mode] = \
+                    self._pending_btc_fees.get(order.network_mode, 0) + btc_fee
+                pending = self._pending_btc_fees[order.network_mode]
+                logger.info(
+                    f"Order {order.id}: BTC fee +{btc_fee} sat "
+                    f"— pending total {pending} sat"
                 )
-                if fee_result.get('success'):
-                    logger.info(
-                        f"Order {order.id}: BTC fee {btc_fee} forwarded to "
-                        f"{fee_wallet} (tx={fee_result['tx_hash']})"
+                if pending >= BTC_DUST_LIMIT:
+                    fee_result = wallet.forward_fee(
+                        chain=order.chain, rpc_url='',
+                        fee_wallet=fee_wallet, amount=pending,
+                        network_mode=order.network_mode,
                     )
-                else:
-                    logger.warning(
-                        f"Order {order.id}: BTC fee forwarding failed — "
-                        f"{fee_result.get('error')}"
-                    )
+                    if fee_result.get('success'):
+                        logger.info(
+                            f"BTC fees flushed: {pending} sat → "
+                            f"{fee_wallet} (tx={fee_result['tx_hash']})"
+                        )
+                        self._pending_btc_fees[order.network_mode] = 0
+                    else:
+                        logger.warning(
+                            f"BTC fee flush failed ({pending} sat) — "
+                            f"{fee_result.get('error')} — will retry next order"
+                        )
 
         except Exception as e:
             logger.error(f"Order {order.id}: BTC withdrawal error — {e}", exc_info=True)

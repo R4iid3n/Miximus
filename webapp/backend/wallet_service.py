@@ -396,7 +396,7 @@ class ServiceWallet:
                 return result
 
             contract_addr = Web3.to_checksum_address(contract_address)
-            nonce = w3.eth.get_transaction_count(self._address)
+            nonce = w3.eth.get_transaction_count(self._address, 'pending')
             # Use 2x gas price to ensure fast inclusion on testnets
             gas_price = max(w3.eth.gas_price * 2, w3.to_wei(1, 'gwei'))
 
@@ -555,7 +555,7 @@ class ServiceWallet:
             abi = MIXER_ERC20_ABI if not is_native else MIXER_NATIVE_ABI
             mixer = w3.eth.contract(address=contract_addr, abi=abi)
 
-            nonce = w3.eth.get_transaction_count(self._address)
+            nonce = w3.eth.get_transaction_count(self._address, 'pending')
             gas_price = max(w3.eth.gas_price * 2, w3.to_wei(1, 'gwei'))
 
             # Ensure proof_points is exactly 8 uint256 values
@@ -870,7 +870,7 @@ class MultiChainWallet:
             # EVM
             w3 = self._evm_wallet.get_web3(chain, rpc_url)
             address = self._evm_wallet.get_address()
-            nonce = w3.eth.get_transaction_count(address)
+            nonce = w3.eth.get_transaction_count(address, 'pending')
             gas_price = w3.eth.gas_price
 
             if is_native:

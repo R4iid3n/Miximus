@@ -13,8 +13,19 @@ const CURRENCY_NAMES: Record<string, string> = {
   BNB: 'BNB', MATIC: 'Polygon', TRX: 'Tron', SOL: 'Solana', AVAX: 'Avalanche',
 }
 
+const STATUS_LABELS: Record<string, string> = {
+  pending: 'Ожидание',
+  confirmed: 'Подтверждён',
+  processing: 'Обработка',
+  proving: 'Генерация доказательства',
+  withdrawing: 'Вывод',
+  completed: 'Завершён',
+  failed: 'Ошибка',
+  expired: 'Истёк',
+}
+
 const CHAIN_LABELS: Record<string, string> = {
-  bitcoin: 'Bitcoin network', ethereum: 'Ethereum', bsc: 'BNB Chain',
+  bitcoin: 'Сеть Bitcoin', ethereum: 'Ethereum', bsc: 'BNB Chain',
   polygon: 'Polygon', tron: 'Tron', avalanche: 'Avalanche',
   arbitrum: 'Arbitrum One', base: 'Base', optimism: 'Optimism',
 }
@@ -90,9 +101,12 @@ export default function MixPage({ networkMode }: Props) {
 
   const presets = useMemo(() => {
     if (!denomValue) return []
-    return [10, 50, 200, 500, 1000]
+    const maxAmount = denomValue * 100
+    return [1, 5, 10, 25, 50, 100]
       .map(m => denomValue * m)
+      .filter(v => v <= maxAmount)
       .map(v => ({ value: v, label: formatAmount(v, selectedPool?.symbol ?? '') }))
+      .slice(0, 6)
   }, [denomValue, selectedPool])
 
   const handlePoolSelect = (pool: Pool) => {
@@ -136,10 +150,10 @@ export default function MixPage({ networkMode }: Props) {
       {/* Header */}
       <div style={{ marginBottom: 32 }}>
         <h1 style={{ color: '#fff', fontSize: 26, fontWeight: 700, margin: 0 }}>
-          Cryptocurrency Mixer
+          Криптовалютный миксер
         </h1>
         <p style={{ color: '#555', fontSize: 14, margin: '6px 0 0' }}>
-          Private transfers using zero-knowledge proofs. Your transaction history stays hidden.
+          Анонимные переводы с использованием доказательств с нулевым разглашением. История транзакций скрыта.
         </p>
       </div>
 
@@ -156,11 +170,11 @@ export default function MixPage({ networkMode }: Props) {
         <>
           {/* ── Step 1: choose currency ── */}
           <div style={{ marginBottom: 28 }}>
-            {sectionLabel(1, 'Select currency')}
+            {sectionLabel(1, 'Выберите валюту')}
             {poolsLoading ? (
-              <div style={{ color: '#555', padding: '20px 0' }}>Loading available pools…</div>
+              <div style={{ color: '#555', padding: '20px 0' }}>Загрузка пулов…</div>
             ) : pools.length === 0 ? (
-              <div style={{ color: '#555', padding: '20px 0' }}>No pools available right now.</div>
+              <div style={{ color: '#555', padding: '20px 0' }}>Нет доступных пулов.</div>
             ) : (
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))', gap: 10 }}>
                 {pools.map(pool => {
@@ -188,11 +202,11 @@ export default function MixPage({ networkMode }: Props) {
                       </div>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
                         <div style={{ color: '#888', fontSize: 12 }}>
-                          Fee <strong style={{ color: '#ffc107' }}>{(pool.commission_rate * 100).toFixed(1)}%</strong>
+                          Комиссия <strong style={{ color: '#ffc107' }}>{(pool.commission_rate * 100).toFixed(1)}%</strong>
                         </div>
                         {rate && denom > 0 && (
                           <div style={{ color: '#555', fontSize: 11 }}>
-                            min ${(denom * rate).toFixed(2)}
+                            от ${(denom * rate).toFixed(2)}
                           </div>
                         )}
                       </div>
@@ -203,7 +217,7 @@ export default function MixPage({ networkMode }: Props) {
                           display: 'inline-block', flexShrink: 0,
                         }} />
                         <span style={{ color: available ? '#4caf50' : '#888', fontSize: 11 }}>
-                          {available ? 'Available' : 'Unavailable'}
+                          {available ? 'Доступно' : 'Недоступно'}
                         </span>
                       </div>
                     </button>
@@ -216,7 +230,7 @@ export default function MixPage({ networkMode }: Props) {
           {/* ── Step 2: amount ── */}
           {selectedPool && (
             <div style={{ marginBottom: 28 }}>
-              {sectionLabel(2, `How much ${selectedPool.symbol} to mix?`)}
+              {sectionLabel(2, `Сколько ${selectedPool.symbol} смешать?`)}
 
               {/* Big amount input */}
               <div style={{ position: 'relative' }}>
@@ -272,12 +286,12 @@ export default function MixPage({ networkMode }: Props) {
                 }}>
                   {calc.tooLarge ? (
                     <div style={{ padding: '12px 16px', color: '#f44336', fontSize: 14, background: 'rgba(244,67,54,0.07)' }}>
-                      Amount too large. Maximum is {formatAmount(denomValue * 100, selectedPool.symbol)} {selectedPool.symbol} per order.
+                      Слишком большая сумма. Максимум: {formatAmount(denomValue * 100, selectedPool.symbol)} {selectedPool.symbol} за заказ.
                     </div>
                   ) : (
                     <>
                       <div style={{ display: 'flex', justifyContent: 'space-between', padding: '13px 16px', background: '#0c0c1a' }}>
-                        <span style={{ color: '#888', fontSize: 14 }}>You send</span>
+                        <span style={{ color: '#888', fontSize: 14 }}>Вы отправляете</span>
                         <div style={{ textAlign: 'right' }}>
                           <span style={{ color: '#fff', fontSize: 15, fontWeight: 600 }}>
                             {formatAmount(calc.send, selectedPool.symbol)} {selectedPool.symbol}
@@ -291,14 +305,14 @@ export default function MixPage({ networkMode }: Props) {
                       </div>
                       <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 16px', background: '#0c0c1a', borderTop: '1px solid #111' }}>
                         <span style={{ color: '#888', fontSize: 13 }}>
-                          Service fee ({(selectedPool.commission_rate * 100).toFixed(1)}%)
+                          Комиссия сервиса ({(selectedPool.commission_rate * 100).toFixed(1)}%)
                         </span>
                         <span style={{ color: '#ffc107', fontSize: 13 }}>
                           −{formatAmount(calc.fee, selectedPool.symbol)} {selectedPool.symbol}
                         </span>
                       </div>
                       <div style={{ display: 'flex', justifyContent: 'space-between', padding: '14px 16px', background: '#0d0d1e', borderTop: '1px solid #111' }}>
-                        <span style={{ color: '#ccc', fontSize: 15, fontWeight: 600 }}>You receive</span>
+                        <span style={{ color: '#ccc', fontSize: 15, fontWeight: 600 }}>Вы получите</span>
                         <div style={{ textAlign: 'right' }}>
                           <span style={{ color: '#4caf50', fontSize: 17, fontWeight: 700 }}>
                             {formatAmount(calc.receive, selectedPool.symbol)} {selectedPool.symbol}
@@ -312,7 +326,7 @@ export default function MixPage({ networkMode }: Props) {
                       </div>
                       {calc.rounded && (
                         <div style={{ padding: '8px 16px', background: '#0a0a16', borderTop: '1px solid #111', color: '#555', fontSize: 11 }}>
-                          ✦ Amount rounded to the nearest valid batch size ({formatAmount(calc.send, selectedPool.symbol)} {selectedPool.symbol})
+                          ✦ Сумма округлена до ближайшего кратного значения ({formatAmount(calc.send, selectedPool.symbol)} {selectedPool.symbol})
                         </div>
                       )}
                     </>
@@ -325,7 +339,7 @@ export default function MixPage({ networkMode }: Props) {
           {/* ── Step 3: recipient ── */}
           {calc && calc.units > 0 && !calc.tooLarge && (
             <div style={{ marginBottom: 8 }}>
-              {sectionLabel(3, 'Recipient address')}
+              {sectionLabel(3, 'Адрес получателя')}
               <input
                 value={recipient}
                 onChange={e => setRecipient(e.target.value)}
@@ -336,7 +350,7 @@ export default function MixPage({ networkMode }: Props) {
                 style={inputStyle}
               />
               <p style={{ color: '#444', fontSize: 12, margin: '6px 0 16px' }}>
-                Mixed funds will be sent here. Double-check before proceeding.
+                Перемешанные средства будут отправлены на этот адрес. Проверьте его перед продолжением.
               </p>
               <button
                 onClick={handleCreate}
@@ -351,8 +365,8 @@ export default function MixPage({ networkMode }: Props) {
                 }}
               >
                 {loading
-                  ? 'Creating order…'
-                  : `Mix ${formatAmount(calc.send, selectedPool?.symbol ?? '')} ${selectedPool?.symbol} →`}
+                  ? 'Создание заказа…'
+                  : `Смешать ${formatAmount(calc.send, selectedPool?.symbol ?? '')} ${selectedPool?.symbol} →`}
               </button>
             </div>
           )}
@@ -372,15 +386,15 @@ export default function MixPage({ networkMode }: Props) {
 
           <div style={{ marginTop: 24 }}>
             <div style={{ color: '#666', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 10 }}>
-              Step 2 · Confirm your payment
+              Шаг 2 · Подтвердите оплату
             </div>
             <p style={{ color: '#888', fontSize: 13, marginBottom: 8 }}>
-              After sending, paste your transaction ID (TXID / hash) below.
+              После отправки вставьте ID вашей транзакции (TXID / хэш) ниже.
             </p>
             <input
               value={txHash}
               onChange={e => setTxHash(e.target.value)}
-              placeholder="Transaction hash / TXID…"
+              placeholder="Хэш транзакции / TXID…"
               style={inputStyle}
             />
             <button
@@ -394,11 +408,11 @@ export default function MixPage({ networkMode }: Props) {
                 cursor: loading || !txHash ? 'default' : 'pointer',
               }}
             >
-              {loading ? 'Submitting…' : 'I\'ve sent the payment →'}
+              {loading ? 'Отправка…' : 'Я отправил платёж →'}
             </button>
           </div>
           <div style={{ textAlign: 'center', marginTop: 16 }}>
-            <span style={{ color: '#444', fontSize: 12 }}>Order ID: </span>
+            <span style={{ color: '#444', fontSize: 12 }}>Заказ №: </span>
             <code style={{ color: '#6c5ce7', fontSize: 12 }}>{order.order_id}</code>
           </div>
         </>
@@ -410,16 +424,16 @@ export default function MixPage({ networkMode }: Props) {
           <div style={{ background: '#111120', borderRadius: 12, padding: 20, border: '1px solid #1e1e35', marginBottom: 16 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
               <div>
-                <div style={{ color: '#555', fontSize: 11 }}>Order ID</div>
+                <div style={{ color: '#555', fontSize: 11 }}>Заказ №</div>
                 <code style={{ color: '#6c5ce7', fontSize: 13 }}>{order.order_id}</code>
               </div>
               <div style={{ textAlign: 'right' }}>
-                <div style={{ color: '#555', fontSize: 11 }}>Status</div>
+                <div style={{ color: '#555', fontSize: 11 }}>Статус</div>
                 <div style={{
                   color: order.status === 'completed' ? '#4caf50' : order.status === 'failed' ? '#f44336' : '#ffc107',
-                  fontSize: 14, fontWeight: 700, textTransform: 'capitalize',
+                  fontSize: 14, fontWeight: 700,
                 }}>
-                  {order.status.replace(/_/g, ' ')}
+                  {STATUS_LABELS[order.status] ?? order.status.replace(/_/g, ' ')}
                 </div>
               </div>
             </div>
@@ -431,9 +445,9 @@ export default function MixPage({ networkMode }: Props) {
               background: 'rgba(76,175,80,0.08)', border: '1px solid rgba(76,175,80,0.3)',
               borderRadius: 10, padding: 20, textAlign: 'center', marginBottom: 16,
             }}>
-              <div style={{ color: '#4caf50', fontSize: 22, fontWeight: 700, marginBottom: 6 }}>✓ Mix complete</div>
+              <div style={{ color: '#4caf50', fontSize: 22, fontWeight: 700, marginBottom: 6 }}>✓ Микс завершён</div>
               <div style={{ color: '#aaa', fontSize: 14 }}>
-                {order.payout_display || order.payout_amount} delivered to {order.recipient_address.slice(0, 14)}…
+                {order.payout_display || order.payout_amount} отправлено на {order.recipient_address.slice(0, 14)}…
               </div>
             </div>
           )}
@@ -448,7 +462,7 @@ export default function MixPage({ networkMode }: Props) {
             width: '100%', padding: '12px', background: 'transparent',
             color: '#666', border: '1px solid #1e1e35', borderRadius: 8, cursor: 'pointer', fontSize: 14,
           }}>
-            Start a new mix
+            Начать новый микс
           </button>
         </>
       )}

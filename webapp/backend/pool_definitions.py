@@ -116,7 +116,7 @@ def get_pool_definitions(private_key_hex: str = '') -> list:
             'chain': 'bitcoin',
             'network_mode': 'testnet',
             'mixer_contract': 'custodial',
-            'denomination': '1450',   # 0.0000145 BTC ≈ $1
+            'denomination': '1000000',   # 0.01 BTC ≈ $950
             'commission_rate': 0.03,
             'min_confirmations': 3,
             'service_wallet_address': btc_t,
@@ -140,7 +140,7 @@ def get_pool_definitions(private_key_hex: str = '') -> list:
             'chain': 'bitcoin',
             'network_mode': 'mainnet',
             'mixer_contract': 'custodial',
-            'denomination': '1450',   # 0.0000145 BTC ≈ $1
+            'denomination': '1000000',   # 0.01 BTC ≈ $950
             'commission_rate': 0.03,
             'min_confirmations': 3,
             'service_wallet_address': btc_m,
